@@ -1,0 +1,67 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# =========================
+# Virtual environment
+# =========================
+venv/
+.env/
+.env
+.env.*
+!.env.example
+
+# =========================
+# Django
+# =========================
+db.sqlite3
+*.log
+staticfiles/
+media/
+
+# =========================
+# Migrations (keep __init__.py)
+# =========================
+**/migrations/
+!**/migrations/__init__.py
+
+# =========================
+# Testing / Coverage
+# =========================
+.coverage
+htmlcov/
+.pytest_cache/
+
+# =========================
+# IDEs / Editors
+# =========================
+.vscode/
+.idea/
+*.swp
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Node / Frontend (if any)
+# =========================
+node_modules/
+
+# =========================
+# Build / Temp
+# =========================
+dist/
+build/
+*.egg-info/
+
+# =========================
+# Secrets
+# =========================
+*.pem
+*.key
