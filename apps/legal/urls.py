@@ -2,5 +2,5 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # Add your URL patterns here
+    path('consent', views.legal_consent_view, name='legal-consent'),
 ]
