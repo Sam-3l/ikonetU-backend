@@ -13,6 +13,7 @@ urlpatterns = [
     path('api/matches/', include('apps.matches.urls')),
     path('api/legal/', include('apps.legal.urls')),
     path('api/reports/', include('apps.reports.urls')),
+    path('api/admin/', include('apps.videos.admin_urls')),
     path('api/admin/', include('apps.reports.admin_urls')),
     path('api/dashboard/', include('apps.accounts.dashboard_urls')),
     path('api/user/', include('apps.accounts.user_urls')),

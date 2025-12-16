@@ -8,7 +8,7 @@ class VideoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Video
         fields = '__all__'
-        read_only_fields = ['id', 'founder', 'view_count', 'created_at']
+        read_only_fields = ['id', 'founder', 'view_count', 'created_at', 'updated_at']
 
 
 class VideoWithFounderSerializer(serializers.ModelSerializer):
@@ -37,3 +37,9 @@ class VideoWithFounderSerializer(serializers.ModelSerializer):
             'user': user_data,
             'profile': profile_data
         }
+
+class VideoHistorySerializer(serializers.ModelSerializer):
+    """Serializer for video history - includes URL"""
+    class Meta:
+        model = Video
+        fields = ['id', 'title', 'url', 'thumbnail_url', 'duration', 'status', 'is_current', 'view_count', 'created_at']
