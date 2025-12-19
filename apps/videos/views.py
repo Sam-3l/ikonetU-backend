@@ -1,8 +1,14 @@
+import os
+import tempfile
+from moviepy import VideoFileClip
+
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import F
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from .models import Video
 from .serializers import VideoSerializer, VideoWithFounderSerializer, VideoHistorySerializer
 
@@ -78,24 +84,81 @@ def create_video_view(request):
     if not video_file:
         return Response({'message': 'video_file is required'}, status=status.HTTP_400_BAD_REQUEST)
     
-    from django.core.files.storage import default_storage
+    trim_start = request.data.get('trim_start')
+    trim_end = request.data.get('trim_end')
     
-    file_name = f"videos/{request.user.id}/{video_file.name}"
-    file_path = default_storage.save(file_name, video_file)
-    full_url = request.build_absolute_uri(default_storage.url(file_path))
-    
-    # Create video - will automatically archive previous current video
-    video = Video.objects.create(
-        founder=request.user,
-        url=full_url,
-        thumbnail_url=request.data.get('thumbnail_url', ''),
-        title=request.data.get('title', video_file.name),
-        duration=request.data.get('duration'),
-        status='processing',  # Awaiting admin approval
-        is_current=True
-    )
-    
-    return Response(VideoSerializer(video).data, status=status.HTTP_201_CREATED)
+    try:
+        # Check if trimming is needed
+        if trim_start and trim_end:
+            trim_start = float(trim_start)
+            trim_end = float(trim_end)
+            
+            # Save to temporary file for processing
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(video_file.name)[1]) as temp_input:
+                for chunk in video_file.chunks():
+                    temp_input.write(chunk)
+                temp_input_path = temp_input.name
+            
+            try:
+                # Load and trim video
+                video_clip = VideoFileClip(temp_input_path)
+                trimmed_clip = video_clip.subclipped(trim_start, trim_end)  # Changed to subclipped for 2.x
+                
+                # Save trimmed video to temporary file
+                temp_output_path = tempfile.mktemp(suffix='.mp4')
+                trimmed_clip.write_videofile(
+                    temp_output_path,
+                    codec='libx264',
+                    audio_codec='aac',
+                    logger=None  # Suppress moviepy output
+                )
+                
+                # Close clips to free resources
+                trimmed_clip.close()
+                video_clip.close()
+                
+                # Read trimmed video and save to storage
+                with open(temp_output_path, 'rb') as trimmed_file:
+                    file_name = f"videos/{request.user.id}/trimmed_{video_file.name.rsplit('.', 1)[0]}.mp4"
+                    file_path = default_storage.save(file_name, ContentFile(trimmed_file.read()))
+                
+                # Clean up temp files
+                os.unlink(temp_input_path)
+                os.unlink(temp_output_path)
+                
+            except Exception as e:
+                # Clean up temp files on error
+                if os.path.exists(temp_input_path):
+                    os.unlink(temp_input_path)
+                raise e
+                
+        else:
+            # No trimming needed, save directly
+            file_name = f"videos/{request.user.id}/{video_file.name}"
+            file_path = default_storage.save(file_name, video_file)
+        
+        full_url = request.build_absolute_uri(default_storage.url(file_path))
+        
+        from .models import Video
+        from .serializers import VideoSerializer
+        
+        video = Video.objects.create(
+            founder=request.user,
+            url=full_url,
+            thumbnail_url=request.data.get('thumbnail_url', ''),
+            title=request.data.get('title', video_file.name),
+            duration=request.data.get('duration'),
+            status='processing',
+            is_current=True
+        )
+        
+        return Response(VideoSerializer(video).data, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        return Response(
+            {'message': f'Video processing failed: {str(e)}'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['POST'])

@@ -8,6 +8,10 @@ class UserManager(BaseUserManager):
         if not email:
             raise ValueError('The Email field must be set')
         email = self.normalize_email(email)
+        
+        if extra_fields.get('role') == 'admin':
+            extra_fields.setdefault('onboarding_complete', True)
+        
         user = self.model(email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
@@ -17,6 +21,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('role', 'admin')
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('onboarding_complete', True)
         return self.create_user(email, password, **extra_fields)
 
 
@@ -47,3 +52,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+    
+    def save(self, *args, **kwargs):
+        if self.role == 'admin':
+            self.onboarding_complete = True
+        super().save(*args, **kwargs)
