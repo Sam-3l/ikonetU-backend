@@ -64,12 +64,6 @@ def me_view(request):
     """
     Get current user details with profile
     """
-
-    print(f"Session Key: {request.session.session_key}")
-    print(f"Session Data: {dict(request.session)}")
-    print(f"Cookies: {request.COOKIES}")
-    print(f"User authenticated: {request.user.is_authenticated}")
-    print(f"User: {request.user}")
     
     if not request.user.is_authenticated:
         return Response({'message': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
