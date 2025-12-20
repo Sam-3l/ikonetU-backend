@@ -35,6 +35,11 @@ def register_view(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
+
+    print(f"=== LOGIN REQUEST ===")
+    print(f"Request headers: {request.headers}")
+    print(f"Request origin: {request.headers.get('origin')}")
+    
     """
     Login user
     """
