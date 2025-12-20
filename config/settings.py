@@ -13,6 +13,7 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(','
 
 # Application definition
 INSTALLED_APPS = [
+    'daphne',  # Keep for later use
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -23,6 +24,7 @@ INSTALLED_APPS = [
     # Third party
     'rest_framework',
     'corsheaders',
+    'channels',  # Keep for later use
     'django_filters',
     
     # Local apps
@@ -67,6 +69,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'  # Keep for later channels use
 
 # Database - Use PostgreSQL in production, SQLite in development
 DATABASES = {
@@ -164,6 +167,16 @@ SESSION_SAVE_EVERY_REQUEST = True  # Force session save on every request
 CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = False
+
+# Channels - Keep configured for later use
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [config('REDIS_URL', default='redis://localhost:6379/0')],
+        },
+    },
+}
 
 # Rate limiting
 RATE_LIMIT_ENABLE = True
