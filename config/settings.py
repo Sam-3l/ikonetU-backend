@@ -146,24 +146,33 @@ if DEBUG:
         'rest_framework.renderers.BrowsableAPIRenderer',
     )
 
-# CORS settings
+# Session settings
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE', default=604800, cast=int)  # 7 days
+SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=not DEBUG, cast=bool)  # False in dev
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = config('SESSION_COOKIE_SAMESITE', default='None' if not DEBUG else 'Lax')
+SESSION_COOKIE_NAME = 'sessionid'
+
+# IMPORTANT: Set this to your frontend domain in production
+SESSION_COOKIE_DOMAIN = config('SESSION_COOKIE_DOMAIN', default=None)
+
+# CSRF settings
+CSRF_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = False
+
+# CORS settings - Make sure your frontend domain is included
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
     default='http://localhost:5173,http://localhost:5000'
 ).split(',')
 CORS_ALLOW_CREDENTIALS = True
 
-# Session settings
-SESSION_ENGINE = 'django.contrib.sessions.backends.db'
-SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE', default=604800, cast=int)  # 7 days
-SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=True, cast=bool)
-SESSION_COOKIE_HTTPONLY = config('SESSION_COOKIE_HTTPONLY', default=True, cast=bool)
-SESSION_COOKIE_SAMESITE = config('SESSION_COOKIE_SAMESITE', default='None')
-SESSION_COOKIE_DOMAIN = None
-
-CSRF_COOKIE_SAMESITE = "None"
-CSRF_COOKIE_SECURE = True
-CSRF_COOKIE_HTTPONLY = False
+CSRF_TRUSTED_ORIGINS = config(
+    'CSRF_TRUSTED_ORIGINS', 
+    default='http://localhost:5173,http://localhost:5000,https://ikonetu-backend.onrender.com'
+).split(',')
 
 # Channels
 CHANNEL_LAYERS = {
@@ -185,5 +194,3 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     CSRF_COOKIE_SECURE = True
-
-CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
