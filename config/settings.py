@@ -122,13 +122,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# REST Framework
+# REST Framework - SWITCHED TO TOKEN AUTH
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'apps.accounts.authentication.SessionAuthentication',
+        'apps.accounts.authentication.TokenAuthentication',  # Changed from SessionAuthentication
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -147,7 +147,7 @@ if DEBUG:
         'rest_framework.renderers.BrowsableAPIRenderer',
     )
 
-# CORS settings - CRITICAL
+# CORS settings - Simplified for token auth
 CORS_ALLOWED_ORIGINS = [
     'https://ikonetu.onrender.com',
     'http://localhost:5173',
@@ -166,22 +166,18 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# Session settings - THE FIX
+# Session settings
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
-SESSION_COOKIE_AGE = 604800  # 7 days
-SESSION_COOKIE_SECURE = True  # Required for cross-origin
+SESSION_COOKIE_AGE = 604800
+SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'None'  # Required for cross-origin
+SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_COOKIE_NAME = 'sessionid'
-SESSION_SAVE_EVERY_REQUEST = True
-# THIS IS KEY - allows subdomain cookies
-SESSION_COOKIE_DOMAIN = '.onrender.com'
 
 # CSRF settings
-CSRF_COOKIE_SAMESITE = 'None'
-CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = False
-CSRF_COOKIE_DOMAIN = '.onrender.com'  # Match session domain
 CSRF_TRUSTED_ORIGINS = [
     'https://ikonetu.onrender.com',
     'https://ikonetu-backend.onrender.com',

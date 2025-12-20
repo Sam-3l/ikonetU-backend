@@ -2,10 +2,14 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from django.contrib.auth import login, logout
-from .serializers import RegisterSerializer, LoginSerializer, UserSerializer
+from django.contrib.auth import authenticate
+from django.core.cache import cache
+from .serializers import RegisterSerializer, UserSerializer
 from .models import User
+import secrets
 
+def generate_token():
+    return secrets.token_urlsafe(32)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -25,33 +29,44 @@ def register_view(request):
             from apps.profiles.models import InvestorProfile
             InvestorProfile.objects.create(user=user)
         
-        login(request, user)
+        # Generate token and store in cache
+        token = generate_token()
+        cache.set(f'auth_token:{token}', user.id, timeout=604800)  # 7 days
+        
         user_serializer = UserSerializer(user)
-        return Response(user_serializer.data, status=status.HTTP_201_CREATED)
+        return Response({
+            'user': user_serializer.data,
+            'token': token
+        }, status=status.HTTP_201_CREATED)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
-
-    print(f"=== LOGIN REQUEST ===")
-    print(f"Request headers: {request.headers}")
-    print(f"Request origin: {request.headers.get('origin')}")
-    
     """
     Login user
     """
-    serializer = LoginSerializer(data=request.data)
-    if serializer.is_valid():
-        user = serializer.validated_data['user']
-        login(request, user)
-        user_serializer = UserSerializer(user)
-        return Response(user_serializer.data)
+    email = request.data.get('email')
+    password = request.data.get('password')
     
-    return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
-
+    if not email or not password:
+        return Response({'error': 'Email and password required'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    user = authenticate(request, username=email, password=password)
+    
+    if user is None:
+        return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    # Generate token and store in cache
+    token = generate_token()
+    cache.set(f'auth_token:{token}', user.id, timeout=604800)  # 7 days
+    
+    user_serializer = UserSerializer(user)
+    return Response({
+        'user': user_serializer.data,
+        'token': token
+    })
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -59,9 +74,12 @@ def logout_view(request):
     """
     Logout user
     """
-    logout(request)
+    # Remove token from cache
+    token = request.headers.get('Authorization', '').replace('Bearer ', '')
+    if token:
+        cache.delete(f'auth_token:{token}')
+    
     return Response({'message': 'Logged out successfully'})
-
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -69,7 +87,6 @@ def me_view(request):
     """
     Get current user details with profile
     """
-    
     if not request.user.is_authenticated:
         return Response({'message': 'Not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
     
