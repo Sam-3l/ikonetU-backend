@@ -9,11 +9,11 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-this-in-produc
 
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.onrender.com').split(',')
 
 # Application definition
 INSTALLED_APPS = [
-    'daphne',  # Keep for later use
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -24,7 +24,7 @@ INSTALLED_APPS = [
     # Third party
     'rest_framework',
     'corsheaders',
-    'channels',  # Keep for later use
+    'channels',
     'django_filters',
     
     # Local apps
@@ -69,9 +69,9 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
-ASGI_APPLICATION = 'config.asgi.application'  # Keep for later channels use
+ASGI_APPLICATION = 'config.asgi.application'
 
-# Database - Use PostgreSQL in production, SQLite in development
+# Database
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -110,7 +110,7 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
+# Static files
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
@@ -147,11 +147,12 @@ if DEBUG:
         'rest_framework.renderers.BrowsableAPIRenderer',
     )
 
-# CORS settings
-CORS_ALLOWED_ORIGINS = config(
-    'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:5173,http://localhost:5000'
-).split(',')
+# CORS settings - CRITICAL
+CORS_ALLOWED_ORIGINS = [
+    'https://ikonetu.onrender.com',
+    'http://localhost:5173',
+    'http://localhost:5000',
+]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -164,23 +165,29 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
 ]
-CORS_EXPOSE_HEADERS = ['Set-Cookie']
 
-# Session settings - CRITICAL FOR PRODUCTION
+# Session settings - THE FIX
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
-SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE', default=604800, cast=int)  # 7 days
-SESSION_COOKIE_SECURE = not DEBUG  # True in production, False in dev
+SESSION_COOKIE_AGE = 604800  # 7 days
+SESSION_COOKIE_SECURE = True  # Required for cross-origin
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+SESSION_COOKIE_SAMESITE = 'None'  # Required for cross-origin
 SESSION_COOKIE_NAME = 'sessionid'
-SESSION_SAVE_EVERY_REQUEST = True  # Force session save on every request
+SESSION_SAVE_EVERY_REQUEST = True
+# THIS IS KEY - allows subdomain cookies
+SESSION_COOKIE_DOMAIN = '.onrender.com'
 
 # CSRF settings
-CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
-CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = 'None'
+CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_DOMAIN = '.onrender.com'  # Match session domain
+CSRF_TRUSTED_ORIGINS = [
+    'https://ikonetu.onrender.com',
+    'https://ikonetu-backend.onrender.com',
+]
 
-# Channels - Keep configured for later use
+# Channels
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -192,14 +199,10 @@ CHANNEL_LAYERS = {
 
 # Rate limiting
 RATE_LIMIT_ENABLE = True
-RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX_REQUESTS = 5
 
 # Security settings for production
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-    CSRF_COOKIE_SECURE = True
-    SESSION_COOKIE_SECURE = True
-
-CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
