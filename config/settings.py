@@ -13,7 +13,6 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(','
 
 # Application definition
 INSTALLED_APPS = [
-    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -24,7 +23,6 @@ INSTALLED_APPS = [
     # Third party
     'rest_framework',
     'corsheaders',
-    'channels',
     'django_filters',
     
     # Local apps
@@ -38,9 +36,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -69,8 +67,8 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
-ASGI_APPLICATION = 'config.asgi.application'
 
+# Database - Use PostgreSQL in production, SQLite in development
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -146,43 +144,26 @@ if DEBUG:
         'rest_framework.renderers.BrowsableAPIRenderer',
     )
 
-# Session settings
-SESSION_ENGINE = 'django.contrib.sessions.backends.db'
-SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE', default=604800, cast=int)  # 7 days
-SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=not DEBUG, cast=bool)  # False in dev
-SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = config('SESSION_COOKIE_SAMESITE', default='None' if not DEBUG else 'Lax')
-SESSION_COOKIE_NAME = 'sessionid'
-
-# IMPORTANT: Set this to your frontend domain in production
-SESSION_COOKIE_DOMAIN = config('SESSION_COOKIE_DOMAIN', default=None)
-
-# CSRF settings
-CSRF_COOKIE_SAMESITE = "None" if not DEBUG else "Lax"
-CSRF_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_HTTPONLY = False
-
-# CORS settings - Make sure your frontend domain is included
+# CORS settings
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
     default='http://localhost:5173,http://localhost:5000'
 ).split(',')
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = config(
-    'CSRF_TRUSTED_ORIGINS', 
-    default='http://localhost:5173,http://localhost:5000,https://ikonetu-backend.onrender.com'
-).split(',')
+# Session settings - CRITICAL FOR PRODUCTION
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE', default=604800, cast=int)  # 7 days
+SESSION_COOKIE_SECURE = not DEBUG  # True in production, False in dev
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+SESSION_COOKIE_NAME = 'sessionid'
+SESSION_SAVE_EVERY_REQUEST = True  # Force session save on every request
 
-# Channels
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [config('REDIS_URL', default='redis://localhost:6379/0')],
-        },
-    },
-}
+# CSRF settings
+CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = False
 
 # Rate limiting
 RATE_LIMIT_ENABLE = True
@@ -194,3 +175,6 @@ if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
