@@ -153,6 +153,18 @@ CORS_ALLOWED_ORIGINS = config(
     default='http://localhost:5173,http://localhost:5000'
 ).split(',')
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+CORS_EXPOSE_HEADERS = ['Set-Cookie']
 
 # Session settings - CRITICAL FOR PRODUCTION
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
