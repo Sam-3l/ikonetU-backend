@@ -123,6 +123,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # REST Framework
 REST_FRAMEWORK = {
+    'DEFAULT_RENDERER_CLASSES': (
+        'rest_framework.renderers.JSONRenderer',
+    ),
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'apps.accounts.authentication.SessionAuthentication',
     ],
@@ -136,6 +139,12 @@ REST_FRAMEWORK = {
     ],
     'EXCEPTION_HANDLER': 'config.exceptions.custom_exception_handler',
 }
+
+if DEBUG:
+    REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = (
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    )
 
 # CORS settings
 CORS_ALLOWED_ORIGINS = config(
