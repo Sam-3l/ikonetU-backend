@@ -120,32 +120,3 @@ def me_view(request):
         'user': user_serializer.data,
         'profile': profile
     })
-
-
-def serve_media(request, path):
-    """
-    Serve media files with proper CORS headers for video streaming
-    """
-    file_path = os.path.join(settings.MEDIA_ROOT, path)
-    
-    if not os.path.exists(file_path):
-        raise Http404("Media file not found")
-    
-    # Guess the content type
-    content_type, _ = mimetypes.guess_type(file_path)
-    if content_type is None:
-        content_type = 'application/octet-stream'
-    
-    # Open file and create response
-    response = FileResponse(open(file_path, 'rb'), content_type=content_type)
-    
-    # Add CORS headers for video streaming
-    response['Access-Control-Allow-Origin'] = '*'
-    response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-    response['Access-Control-Allow-Headers'] = 'Range, Content-Type, Accept, Accept-Encoding, Origin'
-    response['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges'
-    response['Cross-Origin-Resource-Policy'] = 'cross-origin'
-    response['Cross-Origin-Embedder-Policy'] = 'require-corp'
-    response['Accept-Ranges'] = 'bytes'
-    
-    return response

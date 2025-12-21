@@ -24,8 +24,3 @@ urlpatterns = [
 if settings.DEBUG:
     # Development: use Django's static serve
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-else:
-    # Production: use custom view with proper CORS headers
-    urlpatterns += [
-        re_path(r'^media/(?P<path>.*)$', serve_media, name='serve_media'),
-    ]

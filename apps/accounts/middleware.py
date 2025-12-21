@@ -62,36 +62,3 @@ class RateLimitMiddleware:
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
-    
-
-class MediaCORSMiddleware:
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        # Handle OPTIONS preflight requests
-        if request.method == 'OPTIONS' and request.path.startswith('/media/'):
-            from django.http import HttpResponse
-            response = HttpResponse()
-            response['Access-Control-Allow-Origin'] = '*'
-            response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-            response['Access-Control-Allow-Headers'] = 'Range, Content-Type, Accept, Accept-Encoding, Origin'
-            response['Access-Control-Max-Age'] = '86400'
-            return response
-        
-        response = self.get_response(request)
-        
-        # Add CORS headers for all media file responses
-        if request.path.startswith('/media/'):
-            response['Access-Control-Allow-Origin'] = '*'
-            response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
-            response['Access-Control-Allow-Headers'] = 'Range, Content-Type, Accept, Accept-Encoding, Origin'
-            response['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges'
-            response['Cross-Origin-Resource-Policy'] = 'cross-origin'
-            response['Cross-Origin-Embedder-Policy'] = 'require-corp'
-            
-            # Critical for video streaming
-            if 'Accept-Ranges' not in response:
-                response['Accept-Ranges'] = 'bytes'
-            
-        return response

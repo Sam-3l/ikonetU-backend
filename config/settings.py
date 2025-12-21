@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'channels',
     'django_filters',
+    'storages',  # ADDED for R2/S3 storage
     
     # Local apps
     'apps.accounts',
@@ -41,7 +42,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    'apps.accounts.middleware.MediaCORSMiddleware',
+    'apps.accounts.middleware.MediaCORSMiddleware',  # REMOVED - not needed with R2
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -115,13 +116,36 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # IMPORTANT: Tell WhiteNoise to NOT serve media files
-# We'll handle media files separately with our custom view
 WHITENOISE_AUTOREFRESH = DEBUG
 WHITENOISE_USE_FINDERS = DEBUG
 
-# Media files
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Media files configuration
+if DEBUG:
+    # Local storage in development
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
+else:
+    # Cloudflare R2 / S3 in production
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    
+    # R2 credentials from environment
+    AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY')
+    AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME')
+    AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL')
+    AWS_S3_CUSTOM_DOMAIN = config('AWS_S3_CUSTOM_DOMAIN')
+    
+    # Media URL (public access)
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
+    
+    # S3/R2 Configuration
+    AWS_S3_OBJECT_PARAMETERS = {
+        'CacheControl': 'max-age=86400',
+    }
+    AWS_QUERYSTRING_AUTH = False  # Don't add auth query params to URLs
+    AWS_DEFAULT_ACL = 'public-read'  # Make uploads public by default
+    AWS_S3_FILE_OVERWRITE = False  # Don't overwrite files with same name
+    AWS_S3_REGION_NAME = None  # R2 doesn't use regions like S3
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
