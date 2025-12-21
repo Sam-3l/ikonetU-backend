@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    'apps.accounts.middleware.MediaCORSMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -49,7 +50,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.accounts.middleware.RateLimitMiddleware',
-    'apps.accounts.middleware.MediaCORSMiddleware',  # For video streaming CORS
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -113,6 +113,11 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# IMPORTANT: Tell WhiteNoise to NOT serve media files
+# We'll handle media files separately with our custom view
+WHITENOISE_AUTOREFRESH = DEBUG
+WHITENOISE_USE_FINDERS = DEBUG
 
 # Media files
 MEDIA_URL = '/media/'
