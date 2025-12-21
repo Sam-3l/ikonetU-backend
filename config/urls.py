@@ -19,5 +19,5 @@ urlpatterns = [
     path('api/user/', include('apps.accounts.user_urls')),
 ]
 
-if settings.DEBUG:
+if True:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
