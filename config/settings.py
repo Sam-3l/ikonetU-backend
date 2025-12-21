@@ -27,7 +27,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'channels',
     'django_filters',
-    'storages',  # ADDED for R2/S3 storage
+    'storages',
     
     # Local apps
     'apps.accounts',
@@ -42,7 +42,6 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    'apps.accounts.middleware.MediaCORSMiddleware',  # REMOVED - not needed with R2
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
