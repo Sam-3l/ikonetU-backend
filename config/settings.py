@@ -5,11 +5,12 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-this-in-production')
+# SECURITY
+SECRET_KEY = config('SECRET_KEY')
+DEBUG = config('DEBUG', default=False, cast=bool)
 
-DEBUG = config('DEBUG', default=True, cast=bool)
-
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,.onrender.com').split(',')
+# Parse ALLOWED_HOSTS from comma-separated string
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='').split(',') if config('ALLOWED_HOSTS', default='') else []
 
 # Application definition
 INSTALLED_APPS = [
@@ -48,6 +49,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.accounts.middleware.RateLimitMiddleware',
+    'apps.accounts.middleware.MediaCORSMiddleware',  # For video streaming CORS
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -73,20 +75,17 @@ ASGI_APPLICATION = 'config.asgi.application'
 
 # Database
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': config(
+        'DATABASE_URL',
+        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        cast=dj_database_url.parse
+    )
 }
 
-DATABASE_URL = config('DATABASE_URL', default=None)
-
-if DATABASE_URL:
-    DATABASES['default'] = dj_database_url.parse(
-        DATABASE_URL,
-        conn_max_age=600,
-        ssl_require=True
-    )
+# Set connection pooling and SSL for production databases
+if not DEBUG and DATABASES['default']['ENGINE'] != 'django.db.backends.sqlite3':
+    DATABASES['default']['CONN_MAX_AGE'] = 600
+    DATABASES['default']['OPTIONS'] = {'sslmode': 'require'}
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -111,24 +110,24 @@ USE_I18N = True
 USE_TZ = True
 
 # Static files
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Media files
-MEDIA_URL = 'media/'
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# REST Framework - SWITCHED TO TOKEN AUTH
+# REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': (
         'rest_framework.renderers.JSONRenderer',
     ),
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'apps.accounts.authentication.TokenAuthentication',  # Changed from SessionAuthentication
+        'apps.accounts.authentication.TokenAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -141,18 +140,22 @@ REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'config.exceptions.custom_exception_handler',
 }
 
+# Add browsable API in development
 if DEBUG:
     REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] = (
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     )
 
-# CORS settings - Simplified for token auth
-CORS_ALLOWED_ORIGINS = [
-    'https://ikonetu.onrender.com',
-    'http://localhost:5173',
-    'http://localhost:5000',
-]
+# CORS settings
+# Parse CORS_ALLOWED_ORIGINS from comma-separated string
+cors_origins_string = config('CORS_ALLOWED_ORIGINS', default='')
+if cors_origins_string:
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_string.split(',') if origin.strip()]
+else:
+    # Safe defaults for development
+    CORS_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:5000']
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -164,26 +167,30 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'range',  # Critical for video streaming
 ]
 
 # Session settings
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
-SESSION_COOKIE_AGE = 604800
-SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_AGE = 604800  # 1 week
+SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=not DEBUG, cast=bool)
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = config('SESSION_COOKIE_SAMESITE', default='Lax')
 SESSION_COOKIE_NAME = 'sessionid'
 
 # CSRF settings
-CSRF_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SAMESITE = config('SESSION_COOKIE_SAMESITE', default='Lax')  # Use same as session
+CSRF_COOKIE_SECURE = config('CSRF_COOKIE_SECURE', default=not DEBUG, cast=bool)
 CSRF_COOKIE_HTTPONLY = False
-CSRF_TRUSTED_ORIGINS = [
-    'https://ikonetu.onrender.com',
-    'https://ikonetu-backend.onrender.com',
-]
 
-# Channels
+# Parse CSRF_TRUSTED_ORIGINS from comma-separated string
+csrf_origins_string = config('CSRF_TRUSTED_ORIGINS', default='')
+if csrf_origins_string:
+    CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_origins_string.split(',') if origin.strip()]
+else:
+    CSRF_TRUSTED_ORIGINS = []
+
+# Channels (WebSocket support)
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -194,11 +201,17 @@ CHANNEL_LAYERS = {
 }
 
 # Rate limiting
-RATE_LIMIT_ENABLE = True
-RATE_LIMIT_WINDOW = 60
-RATE_LIMIT_MAX_REQUESTS = 5
+RATE_LIMIT_ENABLE = config('RATE_LIMIT_ENABLE', default=True, cast=bool)
+RATE_LIMIT_WINDOW = config('RATE_LIMIT_WINDOW', default=60, cast=int)
+RATE_LIMIT_MAX_REQUESTS = config('RATE_LIMIT_MAX_REQUESTS', default=5, cast=int)
 
 # Security settings for production
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_BROWSER_XSS_FILTER = True
+    X_FRAME_OPTIONS = 'DENY'

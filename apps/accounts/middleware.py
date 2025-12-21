@@ -62,3 +62,22 @@ class RateLimitMiddleware:
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
+    
+
+class MediaCORSMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        
+        # Add CORS headers for media files (videos, thumbnails, etc.)
+        if request.path.startswith('/media/'):
+            response['Access-Control-Allow-Origin'] = '*'
+            response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+            response['Access-Control-Allow-Headers'] = 'Range, Content-Type, Accept, Accept-Encoding'
+            response['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges'
+            response['Cross-Origin-Resource-Policy'] = 'cross-origin'
+            response['Accept-Ranges'] = 'bytes'
+            
+        return response
