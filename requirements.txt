@@ -20,10 +20,7 @@ djangorestframework-simplejwt==5.3.1
 gunicorn==21.2.0
 hyperlink==21.0.0
 idna==3.11
-ImageIO==2.37.2
-imageio-ffmpeg==0.6.0
 Incremental==24.11.0
-moviepy==2.2.1
 msgpack==1.1.2
 numpy==2.3.5
 packaging==25.0
