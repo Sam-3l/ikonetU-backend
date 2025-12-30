@@ -73,7 +73,7 @@ class VideoWithFounderSerializer(serializers.ModelSerializer):
             user = obj.founder
             profile = None
             try:
-                profile = FounderProfile.objects.get(founder=user)
+                profile = profile = FounderProfile.objects.filter(user=user).first()
             except FounderProfile.DoesNotExist:
                 pass
             

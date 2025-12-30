@@ -245,21 +245,28 @@ def video_detail_and_update_view(request, video_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def like_video_view(request, video_id):
-    """Toggle like on a video"""
+    """Toggle like on a video, or force like with double_tap param"""
     try:
         video = Video.objects.get(id=video_id)
+        is_double_tap = request.data.get('double_tap', False) or request.GET.get('double_tap', False)
         
         # Check if user already liked this video
         existing_like = VideoLike.objects.filter(video=video, user=request.user).first()
         
-        if existing_like:
-            # Unlike
-            existing_like.delete()
-            liked = False
-        else:
-            # Like
-            VideoLike.objects.create(video=video, user=request.user)
+        if is_double_tap:
+            # Double tap always likes (never unlikes)
+            if not existing_like:
+                VideoLike.objects.create(video=video, user=request.user)
             liked = True
+        else:
+            if existing_like:
+                # Unlike
+                existing_like.delete()
+                liked = False
+            else:
+                # Like
+                VideoLike.objects.create(video=video, user=request.user)
+                liked = True
         
         like_count = video.likes.count()
         
