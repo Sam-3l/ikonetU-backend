@@ -3,10 +3,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Count, Q
-from .models import Video
-from .serializers import VideoWithFounderSerializer
+from .models import Video, VideoView, VideoLike
 from apps.accounts.models import User
-from apps.accounts.serializers import UserSerializer
 from apps.reports.models import Report
 
 
@@ -26,17 +24,16 @@ def require_admin(view_func):
 @require_admin
 def admin_dashboard_stats_view(request):
     """Get admin dashboard statistics"""
-    
     total_users = User.objects.count()
     total_founders = User.objects.filter(role='founder').count()
     total_investors = User.objects.filter(role='investor').count()
-    
+
     total_videos = Video.objects.count()
     active_videos = Video.objects.filter(status='active', is_current=True).count()
     pending_videos = Video.objects.filter(status='processing', is_current=True).count()
-    
+
     pending_reports = Report.objects.filter(status='pending').count()
-    
+
     return Response({
         'totalUsers': total_users,
         'totalFounders': total_founders,
@@ -54,18 +51,17 @@ def admin_dashboard_stats_view(request):
 def admin_users_view(request):
     """Get all users"""
     users = User.objects.all().order_by('-created_at')
-    
-    users_data = []
-    for user in users:
-        users_data.append({
+    users_data = [
+        {
             'id': user.id,
             'name': user.name,
             'email': user.email,
             'role': user.role,
             'created_at': user.created_at,
             'onboarding_complete': user.onboarding_complete,
-        })
-    
+        }
+        for user in users
+    ]
     return Response(users_data)
 
 
@@ -75,12 +71,12 @@ def admin_users_view(request):
 def admin_videos_view(request):
     """Get all videos for admin review"""
     status_filter = request.GET.get('status', None)
-    
-    videos = Video.objects.select_related('founder').order_by('-created_at')
-    
+
+    videos = Video.objects.select_related('founder').prefetch_related('views', 'likes').order_by('-created_at')
+
     if status_filter:
         videos = videos.filter(status=status_filter)
-    
+
     videos_data = []
     for video in videos:
         videos_data.append({
@@ -91,7 +87,8 @@ def admin_videos_view(request):
             'duration': video.duration,
             'status': video.status,
             'is_current': video.is_current,
-            'view_count': video.view_count,
+            'view_count': video.views.count(),
+            'like_count': video.likes.count(),
             'created_at': video.created_at,
             'founder': {
                 'id': video.founder.id,
@@ -99,7 +96,7 @@ def admin_videos_view(request):
                 'email': video.founder.email,
             }
         })
-    
+
     return Response(videos_data)
 
 
@@ -112,13 +109,9 @@ def admin_approve_video_view(request, video_id):
         video = Video.objects.get(id=video_id)
         video.status = 'active'
         video.save()
-        
         return Response({
             'message': 'Video approved',
-            'video': {
-                'id': video.id,
-                'status': video.status,
-            }
+            'video': {'id': video.id, 'status': video.status}
         })
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -133,13 +126,9 @@ def admin_reject_video_view(request, video_id):
         video = Video.objects.get(id=video_id)
         video.status = 'rejected'
         video.save()
-        
         return Response({
             'message': 'Video rejected',
-            'video': {
-                'id': video.id,
-                'status': video.status,
-            }
+            'video': {'id': video.id, 'status': video.status}
         })
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -152,16 +141,10 @@ def admin_delete_user_view(request, user_id):
     """Delete a user (soft delete - set inactive)"""
     try:
         user = User.objects.get(id=user_id)
-        
         if user.role == 'admin':
-            return Response(
-                {'message': 'Cannot delete admin users'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
+            return Response({'message': 'Cannot delete admin users'}, status=status.HTTP_403_FORBIDDEN)
         user.is_active = False
         user.save()
-        
         return Response({'message': 'User deactivated successfully'})
     except User.DoesNotExist:
         return Response({'message': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
