@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Video
+from .models import Video, VideoLike, VideoView
 from apps.accounts.models import User
 from apps.profiles.models import FounderProfile
 
@@ -33,25 +33,37 @@ class FounderWithProfileSerializer(serializers.Serializer):
 
 class VideoSerializer(serializers.ModelSerializer):
     """Basic video serializer"""
+    like_count = serializers.SerializerMethodField()
+    view_count = serializers.SerializerMethodField()
+    
     class Meta:
         model = Video
         fields = [
             'id', 'founder_id', 'url', 'thumbnail_url', 
-            'title', 'duration', 'status', 'view_count',
+            'title', 'duration', 'status', 'like_count', 'view_count',
             'is_current', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'view_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'like_count', 'view_count', 'created_at', 'updated_at']
+    
+    def get_like_count(self, obj):
+        return obj.likes.count()
+    
+    def get_view_count(self, obj):
+        return obj.views.count()
 
 
 class VideoWithFounderSerializer(serializers.ModelSerializer):
     """Video serializer with full founder details for feed"""
     founder = serializers.SerializerMethodField()
+    like_count = serializers.SerializerMethodField()
+    view_count = serializers.SerializerMethodField()
+    is_liked = serializers.SerializerMethodField()
     
     class Meta:
         model = Video
         fields = [
             'id', 'founder_id', 'url', 'thumbnail_url',
-            'title', 'duration', 'status', 'view_count',
+            'title', 'duration', 'status', 'like_count', 'view_count', 'is_liked',
             'is_current', 'created_at', 'founder'
         ]
     
@@ -82,16 +94,36 @@ class VideoWithFounderSerializer(serializers.ModelSerializer):
         except Exception as e:
             print(f"Error serializing founder: {e}")
             return None
+    
+    def get_like_count(self, obj):
+        return obj.likes.count()
+    
+    def get_view_count(self, obj):
+        return obj.views.count()
+    
+    def get_is_liked(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.likes.filter(user=request.user).exists()
+        return False
 
 
 class VideoHistorySerializer(serializers.ModelSerializer):
     """Video serializer for history view"""
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    like_count = serializers.SerializerMethodField()
+    view_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Video
         fields = [
             'id', 'url', 'thumbnail_url', 'title', 
             'duration', 'status', 'status_display',
-            'view_count', 'is_current', 'created_at'
+            'like_count', 'view_count', 'is_current', 'created_at'
         ]
+    
+    def get_like_count(self, obj):
+        return obj.likes.count()
+    
+    def get_view_count(self, obj):
+        return obj.views.count()

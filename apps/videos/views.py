@@ -2,24 +2,25 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import F
+from django.db.models import F, Q
 from django.core.files.storage import default_storage
-from .models import Video
+from .models import Video, VideoLike, VideoView
 from .serializers import VideoSerializer, VideoWithFounderSerializer, VideoHistorySerializer
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def video_feed_view(request):
-    """Get video feed - only current ACTIVE videos (approved)"""
+    """Get video feed - only current ACTIVE videos (approved) with likes and views"""
     limit = int(request.GET.get('limit', 20))
     offset = int(request.GET.get('offset', 0))
+    user = request.user if request.user.is_authenticated else None
     
     # Only show current active (approved) videos
     videos = Video.objects.filter(
         status='active',
         is_current=True
-    ).select_related('founder')
+    ).select_related('founder').prefetch_related('likes', 'views')
     
     # Get one video per founder (the current one)
     seen_founders = set()
@@ -31,8 +32,22 @@ def video_feed_view(request):
     
     # Apply pagination
     paginated_videos = unique_videos[offset:offset + limit]
-    serializer = VideoWithFounderSerializer(paginated_videos, many=True)
-    return Response(serializer.data)
+    
+    # Add like status for authenticated users
+    serialized_data = []
+    for video in paginated_videos:
+        video_data = VideoWithFounderSerializer(video).data
+        video_data['likeCount'] = video.likes.count()
+        video_data['viewCount'] = video.views.count()
+        
+        if user:
+            video_data['isLiked'] = video.likes.filter(user=user).exists()
+        else:
+            video_data['isLiked'] = False
+            
+        serialized_data.append(video_data)
+    
+    return Response(serialized_data)
 
 
 @api_view(['GET'])
@@ -48,7 +63,10 @@ def my_videos_view(request):
         
         if video:
             serializer = VideoSerializer(video)
-            return Response(serializer.data)
+            video_data = serializer.data
+            video_data['likeCount'] = video.likes.count()
+            video_data['viewCount'] = video.views.count()
+            return Response(video_data)
         else:
             return Response(None, status=status.HTTP_200_OK)
     except Exception as e:
@@ -63,8 +81,14 @@ def video_history_view(request):
         founder=request.user
     ).exclude(status='deleted').order_by('-created_at')
     
-    serializer = VideoHistorySerializer(videos, many=True)
-    return Response(serializer.data)
+    serialized_data = []
+    for video in videos:
+        video_data = VideoHistorySerializer(video).data
+        video_data['likeCount'] = video.likes.count()
+        video_data['viewCount'] = video.views.count()
+        serialized_data.append(video_data)
+    
+    return Response(serialized_data)
 
 
 @api_view(['POST'])
@@ -101,7 +125,11 @@ def create_video_view(request):
             is_current=True
         )
         
-        return Response(VideoSerializer(video).data, status=status.HTTP_201_CREATED)
+        video_data = VideoSerializer(video).data
+        video_data['likeCount'] = 0
+        video_data['viewCount'] = 0
+        
+        return Response(video_data, status=status.HTTP_201_CREATED)
         
     except Exception as e:
         return Response(
@@ -134,7 +162,11 @@ def set_video_as_current_view(request, video_id):
         video.is_current = True
         video.save()  # Will archive the previous current video
         
-        return Response(VideoSerializer(video).data)
+        video_data = VideoSerializer(video).data
+        video_data['likeCount'] = video.likes.count()
+        video_data['viewCount'] = video.views.count()
+        
+        return Response(video_data)
         
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -173,16 +205,20 @@ def delete_video_view(request, video_id):
 def video_detail_and_update_view(request, video_id):
     """Get specific video or update video details"""
     try:
-        video = Video.objects.select_related('founder').get(id=video_id)
+        video = Video.objects.select_related('founder').prefetch_related('likes', 'views').get(id=video_id)
         
         if request.method == 'GET':
-            # Increment view count only for active current videos
-            if video.status == 'active' and video.is_current:
-                Video.objects.filter(id=video_id).update(view_count=F('view_count') + 1)
-                video.refresh_from_db()
-            
             serializer = VideoWithFounderSerializer(video)
-            return Response(serializer.data)
+            video_data = serializer.data
+            video_data['likeCount'] = video.likes.count()
+            video_data['viewCount'] = video.views.count()
+            
+            if request.user.is_authenticated:
+                video_data['isLiked'] = video.likes.filter(user=request.user).exists()
+            else:
+                video_data['isLiked'] = False
+            
+            return Response(video_data)
         
         elif request.method == 'PUT':
             if not request.user.is_authenticated or video.founder != request.user:
@@ -195,10 +231,94 @@ def video_detail_and_update_view(request, video_id):
             serializer = VideoSerializer(video, data=update_data, partial=True)
             if serializer.is_valid():
                 serializer.save()
-                return Response(serializer.data)
+                video_data = serializer.data
+                video_data['likeCount'] = video.likes.count()
+                video_data['viewCount'] = video.views.count()
+                return Response(video_data)
             
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
+    except Video.DoesNotExist:
+        return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def like_video_view(request, video_id):
+    """Toggle like on a video"""
+    try:
+        video = Video.objects.get(id=video_id)
+        
+        # Check if user already liked this video
+        existing_like = VideoLike.objects.filter(video=video, user=request.user).first()
+        
+        if existing_like:
+            # Unlike
+            existing_like.delete()
+            liked = False
+        else:
+            # Like
+            VideoLike.objects.create(video=video, user=request.user)
+            liked = True
+        
+        like_count = video.likes.count()
+        
+        return Response({
+            'liked': liked,
+            'likeCount': like_count
+        })
+        
+    except Video.DoesNotExist:
+        return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def track_video_view(request, video_id):
+    """Track a video view"""
+    try:
+        video = Video.objects.get(id=video_id)
+        
+        # Create view record
+        # For authenticated users, track by user
+        # For anonymous users, track by session or IP
+        if request.user.is_authenticated:
+            # Check if user already viewed this video
+            existing_view = VideoView.objects.filter(
+                video=video, 
+                user=request.user
+            ).first()
+            
+            if not existing_view:
+                VideoView.objects.create(video=video, user=request.user)
+        else:
+            # For anonymous users, use session or IP
+            session_key = request.session.session_key
+            if not session_key:
+                request.session.create()
+                session_key = request.session.session_key
+            
+            ip_address = request.META.get('REMOTE_ADDR')
+            
+            # Check if this session/IP already viewed
+            existing_view = VideoView.objects.filter(
+                video=video,
+                session_key=session_key
+            ).first()
+            
+            if not existing_view:
+                VideoView.objects.create(
+                    video=video,
+                    session_key=session_key,
+                    ip_address=ip_address
+                )
+        
+        view_count = video.views.count()
+        
+        return Response({
+            'viewCount': view_count
+        })
+        
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -224,7 +344,11 @@ def admin_update_video_status_view(request, video_id):
         video.status = new_status
         video.save()
         
-        return Response(VideoSerializer(video).data)
+        video_data = VideoSerializer(video).data
+        video_data['likeCount'] = video.likes.count()
+        video_data['viewCount'] = video.views.count()
+        
+        return Response(video_data)
         
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
