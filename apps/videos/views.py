@@ -36,7 +36,7 @@ def video_feed_view(request):
     # Add like status for authenticated users
     serialized_data = []
     for video in paginated_videos:
-        video_data = VideoWithFounderSerializer(video).data
+        video_data = VideoWithFounderSerializer(video, context={'request': request}).data
         video_data['likeCount'] = video.likes.count()
         video_data['viewCount'] = video.views.count()
         
