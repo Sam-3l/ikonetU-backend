@@ -6,36 +6,40 @@ from django.db.models import F, Q
 from django.core.files.storage import default_storage
 from .models import Video, VideoLike, VideoView
 from .serializers import VideoSerializer, VideoWithFounderSerializer, VideoHistorySerializer
+from .feed_algorithm import get_smart_feed_for_investor
 
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def video_feed_view(request):
-    """Get video feed - only current ACTIVE videos (approved) with likes and views"""
+    """Get smart video feed based on user preferences"""
     limit = int(request.GET.get('limit', 20))
     offset = int(request.GET.get('offset', 0))
     user = request.user if request.user.is_authenticated else None
     
-    # Only show current active (approved) videos
-    videos = Video.objects.filter(
-        status='active',
-        is_current=True
-    ).select_related('founder').prefetch_related('likes', 'views')
+    # Use smart feed for investors
+    if user and user.role == 'investor':
+        videos = get_smart_feed_for_investor(user, limit, offset)
+    else:
+        # Default feed for non-investors
+        videos = Video.objects.filter(
+            status='active',
+            is_current=True
+        ).select_related('founder').prefetch_related('likes', 'views')
+        
+        seen_founders = set()
+        unique_videos = []
+        for video in videos:
+            if video.founder_id not in seen_founders:
+                unique_videos.append(video)
+                seen_founders.add(video.founder_id)
+        
+        videos = unique_videos[offset:offset + limit]
     
-    # Get one video per founder (the current one)
-    seen_founders = set()
-    unique_videos = []
-    for video in videos:
-        if video.founder_id not in seen_founders:
-            unique_videos.append(video)
-            seen_founders.add(video.founder_id)
-    
-    # Apply pagination
-    paginated_videos = unique_videos[offset:offset + limit]
-    
-    # Add like status for authenticated users
+    # Serialize with like/view counts
     serialized_data = []
-    for video in paginated_videos:
+    for video in videos:
+        from .serializers import VideoWithFounderSerializer
         video_data = VideoWithFounderSerializer(video, context={'request': request}).data
         video_data['likeCount'] = video.likes.count()
         video_data['viewCount'] = video.views.count()
