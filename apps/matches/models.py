@@ -26,12 +26,21 @@ class Match(models.Model):
 
 
 class Message(models.Model):
-    """Messages between matched users"""
+    """Messages between matched users with delivery tracking"""
+    
+    STATUS_CHOICES = [
+        ('sent', 'Sent'),           # Message sent from sender
+        ('delivered', 'Delivered'),  # Message reached recipient's device
+        ('read', 'Read'),            # Message opened/read by recipient
+    ]
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     match = models.ForeignKey(Match, on_delete=models.CASCADE, related_name='messages')
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='messages_sent')
     content = models.TextField()
-    is_read = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='sent')
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -39,8 +48,25 @@ class Message(models.Model):
         ordering = ['created_at']
         indexes = [
             models.Index(fields=['match', 'created_at']),
-            models.Index(fields=['sender', 'is_read']),
+            models.Index(fields=['sender', 'status']),
+            models.Index(fields=['match', 'status']),
         ]
 
     def __str__(self):
-        return f"{self.sender.name} in {self.match.id}"
+        return f"{self.sender.name} in {self.match.id}: {self.status}"
+
+    def mark_delivered(self):
+        """Mark message as delivered"""
+        from django.utils import timezone
+        if self.status == 'sent':
+            self.status = 'delivered'
+            self.delivered_at = timezone.now()
+            self.save()
+
+    def mark_read(self):
+        """Mark message as read"""
+        from django.utils import timezone
+        if self.status in ['sent', 'delivered']:
+            self.status = 'read'
+            self.read_at = timezone.now()
+            self.save()

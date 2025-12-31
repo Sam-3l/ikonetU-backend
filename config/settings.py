@@ -221,10 +221,11 @@ else:
 # Channels (WebSocket support)
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            "hosts": [config('REDIS_URL', default='redis://localhost:6379/0')],
-        },
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',  # Development
+        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        # 'CONFIG': {
+        #     "hosts": [config('REDIS_URL', default='redis://localhost:6379/0')],
+        # },
     },
 }
 
