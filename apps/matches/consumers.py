@@ -37,8 +37,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
-        # Mark all messages as delivered when user connects
-        await self.mark_messages_delivered()
+        # Mark all messages as delivered when user connects and notify sender
+        delivered_ids = await self.mark_messages_delivered()
+        
+        # Broadcast delivery status to sender
+        for message_id in delivered_ids:
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'message_status_update',
+                    'message_id': str(message_id),
+                    'status': 'delivered',
+                }
+            )
 
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
@@ -101,6 +112,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'is_typing': data.get('is_typing', False),
                 }
             )
+        
+        elif message_type == 'mark_read':
+            # Mark all messages as read and broadcast status
+            read_ids = await self.mark_all_messages_read()
+            for message_id in read_ids:
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'message_status_update',
+                        'message_id': str(message_id),
+                        'status': 'read',
+                    }
+                )
 
     async def chat_message(self, event):
         """Send chat message to WebSocket"""
@@ -110,6 +134,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if message['sender_id'] != str(self.user.id):
             await self.mark_message_delivered_by_id(message['id'])
             message['status'] = 'delivered'
+            
+            # Broadcast delivery status back to sender
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'message_status_update',
+                    'message_id': message['id'],
+                    'status': 'delivered',
+                }
+            )
 
         await self.send(text_data=json.dumps({
             'type': 'chat_message',
@@ -160,14 +194,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def mark_messages_delivered(self):
-        """Mark all undelivered messages as delivered"""
-        Message.objects.filter(
+        """Mark all undelivered messages as delivered and return their IDs"""
+        messages = Message.objects.filter(
             match_id=self.match_id,
             status='sent'
-        ).exclude(sender=self.user).update(
+        ).exclude(sender=self.user)
+        
+        message_ids = list(messages.values_list('id', flat=True))
+        
+        messages.update(
             status='delivered',
             delivered_at=timezone.now()
         )
+        
+        return message_ids
 
     @database_sync_to_async
     def mark_message_delivered_by_id(self, message_id):
@@ -175,7 +215,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             message = Message.objects.get(id=message_id)
             if message.status == 'sent' and message.sender_id != self.user.id:
-                message.mark_delivered()
+                message.status = 'delivered'
+                message.delivered_at = timezone.now()
+                message.save(update_fields=['status', 'delivered_at'])
         except Message.DoesNotExist:
             pass
 
@@ -185,6 +227,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             message = Message.objects.get(id=message_id)
             if message.sender_id != self.user.id:
-                message.mark_read()
+                message.status = 'read'
+                message.read_at = timezone.now()
+                message.save(update_fields=['status', 'read_at'])
         except Message.DoesNotExist:
             pass
+
+    @database_sync_to_async
+    def mark_all_messages_read(self):
+        """Mark all messages from other user as read and return their IDs"""
+        messages = Message.objects.filter(
+            match_id=self.match_id,
+            status__in=['sent', 'delivered']
+        ).exclude(sender=self.user)
+        
+        message_ids = list(messages.values_list('id', flat=True))
+        
+        messages.update(
+            status='read',
+            read_at=timezone.now()
+        )
+        
+        return message_ids

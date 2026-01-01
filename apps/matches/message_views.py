@@ -34,10 +34,10 @@ def match_messages_view(request, match_id):
     if before:
         messages = messages.filter(created_at__lt=Message.objects.get(id=before).created_at)
     
-    messages = messages.order_by('-created_at')[:limit]
-    messages = list(reversed(messages))  # Reverse to chronological order
+    messages_list = messages.order_by('-created_at')[:limit]
+    messages_list = list(reversed(messages_list))  # Reverse to chronological order
     
-    # Mark unread messages as delivered (REST fallback)
+    # First mark 'sent' messages as 'delivered' (recipient has fetched them)
     Message.objects.filter(
         match=match,
         status='sent'
@@ -46,7 +46,11 @@ def match_messages_view(request, match_id):
         delivered_at=timezone.now()
     )
     
-    # Serialize with status
+    # Serialize with status - refresh from DB to get updated statuses
+    messages_list = Message.objects.filter(
+        id__in=[msg.id for msg in messages_list]
+    ).order_by('created_at')
+    
     data = [{
         'id': str(msg.id),
         'sender_id': str(msg.sender_id),
@@ -55,7 +59,7 @@ def match_messages_view(request, match_id):
         'delivered_at': msg.delivered_at.isoformat() if msg.delivered_at else None,
         'read_at': msg.read_at.isoformat() if msg.read_at else None,
         'created_at': msg.created_at.isoformat(),
-    } for msg in messages]
+    } for msg in messages_list]
     
     return Response(data)
 
@@ -118,7 +122,7 @@ def send_message_view(request, match_id):
 def mark_messages_read_view(request, match_id):
     """
     Mark all messages in match as read
-    Used for: Batch marking (when user opens chat)
+    Used for: When user is actively viewing the chat
     """
     user = request.user
     
@@ -129,20 +133,82 @@ def mark_messages_read_view(request, match_id):
     except Match.DoesNotExist:
         return Response({'message': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
     
-    # Mark all messages from other user as read
-    messages_to_update = Message.objects.filter(
+    # First mark 'sent' as 'delivered' if not already
+    Message.objects.filter(
+        match=match,
+        status='sent'
+    ).exclude(sender=user).update(
+        status='delivered',
+        delivered_at=timezone.now()
+    )
+    
+    # Then mark 'delivered' and 'sent' as 'read'
+    messages_to_read = Message.objects.filter(
         match=match,
         status__in=['sent', 'delivered']
     ).exclude(sender=user)
     
-    updated_count = messages_to_update.update(
+    updated_count = messages_to_read.update(
         status='read',
         read_at=timezone.now()
     )
     
     return Response({
         'marked_read': updated_count,
-        'message_ids': list(messages_to_update.values_list('id', flat=True))
+        'message_ids': list(messages_to_read.values_list('id', flat=True))
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_messages_delivered_view(request, match_id):
+    """
+    Mark messages as delivered when recipient loads the chat
+    Separate from marking as read
+    """
+    user = request.user
+    
+    try:
+        match = Match.objects.get(
+            Q(id=match_id) & (Q(investor=user) | Q(founder=user))
+        )
+    except Match.DoesNotExist:
+        return Response({'message': 'Match not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Mark 'sent' messages as 'delivered'
+    messages_to_deliver = Message.objects.filter(
+        match=match,
+        status='sent'
+    ).exclude(sender=user)
+    
+    message_ids = list(messages_to_deliver.values_list('id', flat=True))
+    
+    updated_count = messages_to_deliver.update(
+        status='delivered',
+        delivered_at=timezone.now()
+    )
+    
+    # Broadcast delivery status via WebSocket
+    if updated_count > 0:
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        room_group_name = f'chat_{match_id}'
+        
+        for message_id in message_ids:
+            async_to_sync(channel_layer.group_send)(
+                room_group_name,
+                {
+                    'type': 'message_status_update',
+                    'message_id': str(message_id),
+                    'status': 'delivered',
+                }
+            )
+    
+    return Response({
+        'marked_delivered': updated_count,
+        'message_ids': [str(mid) for mid in message_ids]
     })
 
 

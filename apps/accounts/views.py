@@ -4,6 +4,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.contrib.auth import authenticate
 from django.core.cache import cache
+from apps.videos.models import Video, VideoLike, VideoView
+from apps.profiles.models import FounderProfile, InvestorProfile
+from apps.profiles.serializers import FounderProfileSerializer, InvestorProfileSerializer
 from .serializers import RegisterSerializer, UserSerializer
 from .models import User
 import secrets
@@ -119,4 +122,63 @@ def me_view(request):
     return Response({
         'user': user_serializer.data,
         'profile': profile
-    })
+    })    
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_user_profile(request, user_id):
+    try:
+        user = User.objects.get(id=user_id)
+        
+        if user.role == 'founder':
+            profile = FounderProfile.objects.get(user=user)
+            profile_data = FounderProfileSerializer(profile).data
+            
+            # Get current active/processing video (is_current=True)
+            current_video = Video.objects.filter(
+                founder=user,
+                is_current=True,
+                status__in=['active', 'processing']
+            ).first()
+            
+            video_data = None
+            if current_video:
+                # Check if requesting user has liked this video
+                is_liked = False
+                if request.user.is_authenticated:
+                    is_liked = VideoLike.objects.filter(
+                        video=current_video,
+                        user=request.user
+                    ).exists()
+                
+                # Get like and view counts
+                like_count = VideoLike.objects.filter(video=current_video).count()
+                view_count = VideoView.objects.filter(video=current_video).count()
+                
+                video_data = {
+                    'id': str(current_video.id),
+                    'url': current_video.url,
+                    'thumbnailUrl': current_video.thumbnail_url,
+                    'title': current_video.title,
+                    'duration': current_video.duration,
+                    'status': current_video.status,
+                    'viewCount': view_count,
+                    'likeCount': like_count,
+                    'isLiked': is_liked,
+                    'createdAt': current_video.created_at.isoformat(),
+                }
+        else:
+            profile = InvestorProfile.objects.get(user=user)
+            profile_data = InvestorProfileSerializer(profile).data
+            video_data = None
+            
+        return Response({
+            'role': user.role,
+            'name': user.name,
+            'avatarUrl': user.avatar_url,
+            'founderProfile': profile_data if user.role == 'founder' else None,
+            'investorProfile': profile_data if user.role == 'investor' else None,
+            'currentVideo': video_data
+        })
+    except (User.DoesNotExist, FounderProfile.DoesNotExist, InvestorProfile.DoesNotExist):
+        return Response({'message': 'Profile not found'}, status=404)
