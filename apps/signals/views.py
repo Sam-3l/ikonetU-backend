@@ -13,7 +13,7 @@ from apps.accounts.models import User
 def create_signal_view(request):
     """
     Create a signal (swipe action)
-    Auto-creates match if investor shows interest
+    Creates PENDING match if investor shows interest
     """
     investor = request.user
     
@@ -25,7 +25,7 @@ def create_signal_view(request):
     
     founder_id = request.data.get('founder_id')
     video_id = request.data.get('video_id')
-    signal_type = request.data.get('type')  # 'interested', 'maybe', 'pass'
+    signal_type = request.data.get('type')
     
     if not all([founder_id, video_id, signal_type]):
         return Response(
@@ -55,18 +55,18 @@ def create_signal_view(request):
             }
         )
         
-        # Auto-create match if interested
+        # Create PENDING match if interested
         match_created = False
         if signal_type == 'interested':
             match, match_created = Match.objects.get_or_create(
                 investor=investor,
                 founder=founder,
-                defaults={'is_active': True}
+                defaults={'is_active': False}
             )
     
     return Response({
         'signal': {
-            'id': signal.id,
+            'id': str(signal.id),
             'type': signal.type,
             'created': created
         },

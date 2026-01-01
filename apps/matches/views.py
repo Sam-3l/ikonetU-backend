@@ -23,12 +23,22 @@ def my_matches_view(request):
         return Response({'message': 'Invalid role'}, status=status.HTTP_403_FORBIDDEN)
     
     # Annotate with message counts and last message
-    matches = matches.annotate(
-        message_count=Count('messages'),
-        last_message_time=Max('messages__created_at')
-    ).select_related('investor', 'founder').prefetch_related(
-        Prefetch('messages', queryset=Message.objects.order_by('-created_at')[:1])
-    ).order_by('-last_message_time', '-created_at')
+    matches = (
+        matches
+        .annotate(
+            message_count=Count('messages'),
+            last_message_time=Max('messages__created_at')
+        )
+        .select_related('investor', 'founder')
+        .prefetch_related(
+            Prefetch(
+                'messages',
+                queryset=Message.objects.order_by('-created_at'),
+                to_attr='ordered_messages'
+            )
+        )
+        .order_by('-last_message_time', '-created_at')
+    )
     
     # Serialize matches
     data = []
@@ -60,30 +70,31 @@ def my_matches_view(request):
                 profile_data = None
         
         # Get last message
-        last_message = match.messages.first() if match.messages.exists() else None
+        last_message = match.ordered_messages[0] if match.ordered_messages else None
         
-        # Count unread messages
+        # Count unread messages (status is 'sent' or 'delivered', not 'read')
         unread_count = Message.objects.filter(
             match=match,
-            is_read=False
+            status__in=['sent', 'delivered']
         ).exclude(sender=user).count()
         
         data.append({
-            'id': match.id,
+            'id': str(match.id),
             'is_active': match.is_active,
-            'created_at': match.created_at,
+            'created_at': match.created_at.isoformat(),
             'other_user': {
-                'id': other_user.id,
+                'id': str(other_user.id),
                 'name': other_user.name,
                 'avatar_url': other_user.avatar_url,
                 'role': other_user.role,
             },
             'other_profile': profile_data,
             'last_message': {
-                'id': last_message.id,
+                'id': str(last_message.id),
                 'content': last_message.content,
-                'sender_id': last_message.sender_id,
-                'created_at': last_message.created_at,
+                'sender_id': str(last_message.sender_id),
+                'status': last_message.status,
+                'created_at': last_message.created_at.isoformat(),
             } if last_message else None,
             'unread_count': unread_count,
         })
@@ -135,11 +146,11 @@ def match_detail_view(request, match_id):
             profile_data = None
     
     return Response({
-        'id': match.id,
+        'id': str(match.id),
         'is_active': match.is_active,
-        'created_at': match.created_at,
+        'created_at': match.created_at.isoformat(),
         'other_user': {
-            'id': other_user.id,
+            'id': str(other_user.id),
             'name': other_user.name,
             'avatar_url': other_user.avatar_url,
             'role': other_user.role,
@@ -165,3 +176,60 @@ def unmatch_view(request, match_id):
     match.save()
     
     return Response({'message': 'Unmatched successfully'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def accept_match_view(request, match_id):
+    """Accept a pending match (investor only)"""
+    user = request.user
+    
+    if user.role != 'investor':
+        return Response(
+            {'message': 'Only investors can accept matches'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        match = Match.objects.get(id=match_id, investor=user, is_active=False)
+    except Match.DoesNotExist:
+        return Response(
+            {'message': 'Match not found or already active'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    match.is_active = True
+    match.save()
+    
+    return Response({
+        'message': 'Match accepted',
+        'match': {
+            'id': str(match.id),
+            'is_active': match.is_active
+        }
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def reject_match_view(request, match_id):
+    """Reject a pending match (investor only)"""
+    user = request.user
+    
+    if user.role != 'investor':
+        return Response(
+            {'message': 'Only investors can reject matches'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        match = Match.objects.get(id=match_id, investor=user, is_active=False)
+    except Match.DoesNotExist:
+        return Response(
+            {'message': 'Match not found or already processed'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    match.delete()  # Permanently delete rejected matches
+    
+    return Response({'message': 'Match rejected'})

@@ -6,6 +6,8 @@ urlpatterns = [
     path('', views.my_matches_view, name='my-matches'),
     path('<uuid:match_id>/', views.match_detail_view, name='match-detail'),
     path('<uuid:match_id>/unmatch/', views.unmatch_view, name='unmatch'),
+    path('<uuid:match_id>/accept/', views.accept_match_view, name='accept-match'),
+    path('<uuid:match_id>/reject/', views.reject_match_view, name='reject-match'),
     
     # Messages
     path('<uuid:match_id>/messages/', message_views.match_messages_view, name='match-messages'),

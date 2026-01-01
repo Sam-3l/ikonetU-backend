@@ -182,7 +182,7 @@ if cors_origins_string:
     CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_string.split(',') if origin.strip()]
 else:
     # Safe defaults for development
-    CORS_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:5000']
+    CORS_ALLOWED_ORIGINS = ['http://localhost:5173', 'http://localhost:5000', 'http://localhost:8088/']
 
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
