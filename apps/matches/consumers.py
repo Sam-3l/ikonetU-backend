@@ -2,6 +2,7 @@ import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.utils import timezone
+from django.core.cache import cache
 from .models import Match, Message
 from apps.accounts.models import User
 
@@ -18,18 +19,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.room_group_name = f'chat_{self.match_id}'
         self.user = self.scope['user']
 
-        # Verify user is authenticated
         if not self.user.is_authenticated:
             await self.close()
             return
 
-        # Verify user is part of this match
-        is_valid = await self.verify_match_access()
-        if not is_valid:
+        match_data = await self.verify_match_access()
+        if not match_data:
             await self.close()
             return
+        
+        self.other_user_id = match_data['other_user_id']
 
-        # Join room group
         await self.channel_layer.group_add(
             self.room_group_name,
             self.channel_name
@@ -37,10 +37,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
-        # Mark all messages as delivered when user connects and notify sender
+        cache.set(f'user_online_{self.user.id}_{self.match_id}', True, timeout=300)
+
         delivered_ids = await self.mark_messages_delivered()
         
-        # Broadcast delivery status to sender
         for message_id in delivered_ids:
             await self.channel_layer.group_send(
                 self.room_group_name,
@@ -51,9 +51,36 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 }
             )
 
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'user_presence',
+                'user_id': str(self.user.id),
+                'is_online': True,
+            }
+        )
+
+        other_user_online = cache.get(f'user_online_{self.other_user_id}_{self.match_id}', False)
+        if other_user_online:
+            await self.send(text_data=json.dumps({
+                'type': 'user_presence',
+                'user_id': str(self.other_user_id),
+                'is_online': True,
+            }))
+
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
-        # Leave room group
+        cache.delete(f'user_online_{self.user.id}_{self.match_id}')
+
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                'type': 'user_presence',
+                'user_id': str(self.user.id),
+                'is_online': False,
+            }
+        )
+
         await self.channel_layer.group_discard(
             self.room_group_name,
             self.channel_name
@@ -64,16 +91,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
         data = json.loads(text_data)
         message_type = data.get('type')
 
+        cache.set(f'user_online_{self.user.id}_{self.match_id}', True, timeout=300)
+
         if message_type == 'chat_message':
             content = data.get('content', '').strip()
             
             if not content or len(content) > 5000:
                 return
 
-            # Save message to database
             message = await self.save_message(content)
 
-            # Send message to room group
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {
@@ -92,7 +119,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             message_id = data.get('message_id')
             await self.mark_message_read(message_id)
 
-            # Notify sender that message was read
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {
@@ -103,7 +129,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
 
         elif message_type == 'typing':
-            # Broadcast typing indicator
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {
@@ -114,7 +139,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
         
         elif message_type == 'mark_read':
-            # Mark all messages as read and broadcast status
             read_ids = await self.mark_all_messages_read()
             for message_id in read_ids:
                 await self.channel_layer.group_send(
@@ -125,25 +149,33 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         'status': 'read',
                     }
                 )
+        
+        elif message_type == 'ping':
+            await self.send(text_data=json.dumps({
+                'type': 'pong'
+            }))
 
     async def chat_message(self, event):
         """Send chat message to WebSocket"""
         message = event['message']
         
-        # Mark as delivered if this is the recipient
         if message['sender_id'] != str(self.user.id):
-            await self.mark_message_delivered_by_id(message['id'])
+            message_id = message['id']
+            await self.mark_message_delivered_by_id(message_id)
             message['status'] = 'delivered'
             
-            # Broadcast delivery status back to sender
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {
                     'type': 'message_status_update',
-                    'message_id': message['id'],
+                    'message_id': message_id,
                     'status': 'delivered',
                 }
             )
+
+        if 'created_at' in message:
+            if not isinstance(message['created_at'], str):
+                message['created_at'] = message['created_at'].isoformat()
 
         await self.send(text_data=json.dumps({
             'type': 'chat_message',
@@ -160,7 +192,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def typing_indicator(self, event):
         """Send typing indicator to WebSocket"""
-        # Don't send to the user who is typing
         if event['user_id'] != str(self.user.id):
             await self.send(text_data=json.dumps({
                 'type': 'typing_indicator',
@@ -168,17 +199,37 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'is_typing': event['is_typing'],
             }))
 
+    async def user_presence(self, event):
+        """Send user presence update to WebSocket"""
+        if event['user_id'] != str(self.user.id):
+            await self.send(text_data=json.dumps({
+                'type': 'user_presence',
+                'user_id': event['user_id'],
+                'is_online': event['is_online'],
+            }))
+
     @database_sync_to_async
     def verify_match_access(self):
-        """Verify user has access to this match"""
+        """Verify user has access to this match and return other user's ID"""
         try:
             match = Match.objects.get(
                 id=self.match_id,
                 is_active=True
             )
-            return match.investor_id == self.user.id or match.founder_id == self.user.id
+            is_investor = match.investor_id == self.user.id
+            is_founder = match.founder_id == self.user.id
+            
+            if not (is_investor or is_founder):
+                return None
+            
+            other_user_id = match.founder_id if is_investor else match.investor_id
+            
+            return {
+                'valid': True,
+                'other_user_id': other_user_id
+            }
         except Match.DoesNotExist:
-            return False
+            return None
 
     @database_sync_to_async
     def save_message(self, content):
@@ -213,12 +264,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
     def mark_message_delivered_by_id(self, message_id):
         """Mark specific message as delivered"""
         try:
-            message = Message.objects.get(id=message_id)
-            if message.status == 'sent' and message.sender_id != self.user.id:
-                message.status = 'delivered'
-                message.delivered_at = timezone.now()
-                message.save(update_fields=['status', 'delivered_at'])
-        except Message.DoesNotExist:
+            Message.objects.filter(
+                id=message_id,
+                status='sent'
+            ).exclude(sender=self.user).update(
+                status='delivered',
+                delivered_at=timezone.now()
+            )
+        except Exception:
             pass
 
     @database_sync_to_async
@@ -249,3 +302,187 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
         
         return message_ids
+
+
+class PresenceConsumer(AsyncWebsocketConsumer):
+    """
+    Global presence WebSocket consumer
+    Tracks user online/offline status across all chats
+    """
+
+    async def connect(self):
+        """Handle WebSocket connection"""
+        self.user = self.scope['user']
+
+        # Verify user is authenticated
+        if not self.user.is_authenticated:
+            await self.close()
+            return
+
+        self.user_id = str(self.user.id)
+        self.presence_group = f'user_presence_{self.user_id}'
+
+        # Join user's personal presence group
+        await self.channel_layer.group_add(
+            self.presence_group,
+            self.channel_name
+        )
+
+        await self.accept()
+
+        # Mark user as online globally
+        cache.set(f'user_online_global_{self.user_id}', True, timeout=300)
+
+        # Get all matches for this user
+        match_ids = await self.get_user_matches()
+
+        # Join all match-specific presence groups
+        for match_id in match_ids:
+            await self.channel_layer.group_add(
+                f'match_presence_{match_id}',
+                self.channel_name
+            )
+
+        # Broadcast online status to all matches
+        for match_id in match_ids:
+            await self.channel_layer.group_send(
+                f'match_presence_{match_id}',
+                {
+                    'type': 'user_status_update',
+                    'user_id': self.user_id,
+                    'is_online': True,
+                }
+            )
+
+        # Send initial online status of all matched users
+        await self.send_initial_statuses(match_ids)
+
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection"""
+        # Mark user as offline globally
+        cache.delete(f'user_online_global_{self.user_id}')
+
+        # Get all matches for this user
+        match_ids = await self.get_user_matches()
+
+        # Broadcast offline status to all matches
+        for match_id in match_ids:
+            await self.channel_layer.group_send(
+                f'match_presence_{match_id}',
+                {
+                    'type': 'user_status_update',
+                    'user_id': self.user_id,
+                    'is_online': False,
+                    'is_typing': False,  # Clear typing status on disconnect
+                }
+            )
+
+        # Leave all groups
+        await self.channel_layer.group_discard(
+            self.presence_group,
+            self.channel_name
+        )
+        
+        for match_id in match_ids:
+            await self.channel_layer.group_discard(
+                f'match_presence_{match_id}',
+                self.channel_name
+            )
+
+    async def receive(self, text_data):
+        """Receive message from WebSocket"""
+        data = json.loads(text_data)
+        message_type = data.get('type')
+
+        # Refresh online status on any activity
+        cache.set(f'user_online_global_{self.user_id}', True, timeout=300)
+
+        if message_type == 'typing':
+            # Broadcast typing status to specific match
+            match_id = data.get('match_id')
+            is_typing = data.get('is_typing', False)
+
+            if match_id:
+                await self.channel_layer.group_send(
+                    f'match_presence_{match_id}',
+                    {
+                        'type': 'typing_status_update',
+                        'user_id': self.user_id,
+                        'match_id': match_id,
+                        'is_typing': is_typing,
+                    }
+                )
+
+        elif message_type == 'ping':
+            # Heartbeat to keep connection alive
+            await self.send(text_data=json.dumps({
+                'type': 'pong'
+            }))
+
+    async def user_status_update(self, event):
+        """Send user online/offline status update"""
+        # Don't send to the user whose status changed
+        if event['user_id'] != self.user_id:
+            await self.send(text_data=json.dumps({
+                'type': 'user_status',
+                'user_id': event['user_id'],
+                'is_online': event['is_online'],
+                'is_typing': event.get('is_typing', False),
+            }))
+
+    async def typing_status_update(self, event):
+        """Send typing indicator update"""
+        # Don't send to the user who is typing
+        if event['user_id'] != self.user_id:
+            await self.send(text_data=json.dumps({
+                'type': 'typing_status',
+                'user_id': event['user_id'],
+                'match_id': event['match_id'],
+                'is_typing': event['is_typing'],
+            }))
+
+    async def send_initial_statuses(self, match_ids):
+        """Send initial online status of all matched users"""
+        other_user_ids = await self.get_other_users_from_matches(match_ids)
+        
+        statuses = {}
+        for user_id in other_user_ids:
+            is_online = cache.get(f'user_online_global_{user_id}', False)
+            statuses[user_id] = is_online
+
+        await self.send(text_data=json.dumps({
+            'type': 'initial_statuses',
+            'statuses': statuses
+        }))
+
+    @database_sync_to_async
+    def get_user_matches(self):
+        """Get all match IDs for the current user"""
+        from apps.matches.models import Match
+        
+        matches = Match.objects.filter(
+            is_active=True
+        ).filter(
+            investor_id=self.user.id
+        ) | Match.objects.filter(
+            is_active=True,
+            founder_id=self.user.id
+        )
+        
+        return [str(m.id) for m in matches]
+
+    @database_sync_to_async
+    def get_other_users_from_matches(self, match_ids):
+        """Get all other user IDs from matches"""
+        from apps.matches.models import Match
+        
+        matches = Match.objects.filter(id__in=match_ids)
+        other_user_ids = []
+        
+        for match in matches:
+            if str(match.investor_id) == self.user_id:
+                other_user_ids.append(str(match.founder_id))
+            else:
+                other_user_ids.append(str(match.investor_id))
+        
+        return other_user_ids
