@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import views, search_views
 
 urlpatterns = [
     path('feed/', views.video_feed_view, name='video-feed'),
@@ -11,4 +11,9 @@ urlpatterns = [
     path('<uuid:video_id>/delete/', views.delete_video_view, name='delete-video'),
     path('<uuid:video_id>/like/', views.like_video_view, name='like-video'),
     path('<uuid:video_id>/track-view/', views.track_video_view, name='track-video-view'),
+    
+    # Search endpoints
+    path('search/', search_views.search_view, name='search'),
+    path('search/autocomplete/', search_views.autocomplete_suggestions_view, name='search-autocomplete'),
+    path('search/suggestions/', search_views.search_suggestions_view, name='search-suggestions'),
 ]

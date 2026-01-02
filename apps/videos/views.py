@@ -68,8 +68,14 @@ def my_videos_view(request):
         if video:
             serializer = VideoSerializer(video)
             video_data = serializer.data
-            video_data['likeCount'] = video.likes.count()
-            video_data['viewCount'] = video.views.count()
+            
+            # Like and view counts
+            video_data['likeCount'] = VideoLike.objects.filter(video=video).count()
+            video_data['viewCount'] = VideoView.objects.filter(video=video).count()
+            
+            # Check if current user has liked this video
+            video_data['isLiked'] = VideoLike.objects.filter(video=video, user=request.user).exists()
+            
             return Response(video_data)
         else:
             return Response(None, status=status.HTTP_200_OK)
