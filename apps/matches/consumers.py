@@ -11,6 +11,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for real-time chat
     Each match has its own room
+    Presence is handled by PresenceConsumer, this only handles messages
     """
 
     async def connect(self):
@@ -37,8 +38,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
-        cache.set(f'user_online_{self.user.id}_{self.match_id}', True, timeout=300)
-
+        # Mark messages as delivered
         delivered_ids = await self.mark_messages_delivered()
         
         for message_id in delivered_ids:
@@ -51,36 +51,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 }
             )
 
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'user_presence',
-                'user_id': str(self.user.id),
-                'is_online': True,
-            }
-        )
-
-        other_user_online = cache.get(f'user_online_{self.other_user_id}_{self.match_id}', False)
-        if other_user_online:
-            await self.send(text_data=json.dumps({
-                'type': 'user_presence',
-                'user_id': str(self.other_user_id),
-                'is_online': True,
-            }))
-
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
-        cache.delete(f'user_online_{self.user.id}_{self.match_id}')
-
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'user_presence',
-                'user_id': str(self.user.id),
-                'is_online': False,
-            }
-        )
-
         await self.channel_layer.group_discard(
             self.room_group_name,
             self.channel_name
@@ -91,8 +63,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
         data = json.loads(text_data)
         message_type = data.get('type')
 
-        cache.set(f'user_online_{self.user.id}_{self.match_id}', True, timeout=300)
-
         if message_type == 'chat_message':
             content = data.get('content', '').strip()
             
@@ -101,6 +71,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
             message = await self.save_message(content)
 
+            # Broadcast to chat room
             await self.channel_layer.group_send(
                 self.room_group_name,
                 {
@@ -112,6 +83,17 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         'status': message.status,
                         'created_at': message.created_at.isoformat(),
                     }
+                }
+            )
+
+            # ALSO broadcast to global presence for unread notifications
+            await self.channel_layer.group_send(
+                f'match_presence_{str(self.match_id)}',
+                {
+                    'type': 'new_message_notification',
+                    'match_id': str(self.match_id),
+                    'message_id': str(message.id),
+                    'sender_id': str(self.user.id),
                 }
             )
 
@@ -197,15 +179,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'type': 'typing_indicator',
                 'user_id': event['user_id'],
                 'is_typing': event['is_typing'],
-            }))
-
-    async def user_presence(self, event):
-        """Send user presence update to WebSocket"""
-        if event['user_id'] != str(self.user.id):
-            await self.send(text_data=json.dumps({
-                'type': 'user_presence',
-                'user_id': event['user_id'],
-                'is_online': event['is_online'],
             }))
 
     @database_sync_to_async
@@ -307,14 +280,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
 class PresenceConsumer(AsyncWebsocketConsumer):
     """
     Global presence WebSocket consumer
-    Tracks user online/offline status across all chats
+    SINGLE SOURCE OF TRUTH for online/offline status
+    ALSO handles real-time new message notifications
     """
 
     async def connect(self):
         """Handle WebSocket connection"""
         self.user = self.scope['user']
 
-        # Verify user is authenticated
         if not self.user.is_authenticated:
             await self.close()
             return
@@ -322,7 +295,6 @@ class PresenceConsumer(AsyncWebsocketConsumer):
         self.user_id = str(self.user.id)
         self.presence_group = f'user_presence_{self.user_id}'
 
-        # Join user's personal presence group
         await self.channel_layer.group_add(
             self.presence_group,
             self.channel_name
@@ -330,20 +302,19 @@ class PresenceConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
-        # Mark user as online globally
+        # Set global online status
         cache.set(f'user_online_global_{self.user_id}', True, timeout=300)
 
-        # Get all matches for this user
         match_ids = await self.get_user_matches()
 
-        # Join all match-specific presence groups
+        # Join presence groups for all matches
         for match_id in match_ids:
             await self.channel_layer.group_add(
                 f'match_presence_{match_id}',
                 self.channel_name
             )
 
-        # Broadcast online status to all matches
+        # Broadcast online status
         for match_id in match_ids:
             await self.channel_layer.group_send(
                 f'match_presence_{match_id}',
@@ -354,25 +325,22 @@ class PresenceConsumer(AsyncWebsocketConsumer):
                 }
             )
 
-        # Send initial online status of all matched users
         await self.send_initial_statuses(match_ids)
 
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
-
         user_id = getattr(self, "user_id", None)
         presence_group = getattr(self, "presence_group", None)
 
         if not user_id:
             return
 
-        # Mark user as offline globally
+        # Clear global online status
         cache.delete(f'user_online_global_{user_id}')
 
-        # Get all matches for this user
         match_ids = await self.get_user_matches()
 
-        # Broadcast offline status to all matches
+        # Broadcast offline
         for match_id in match_ids:
             await self.channel_layer.group_send(
                 f'match_presence_{match_id}',
@@ -384,7 +352,6 @@ class PresenceConsumer(AsyncWebsocketConsumer):
                 }
             )
 
-        # Leave groups safely
         if presence_group:
             await self.channel_layer.group_discard(
                 presence_group,
@@ -402,15 +369,15 @@ class PresenceConsumer(AsyncWebsocketConsumer):
         data = json.loads(text_data)
         message_type = data.get('type')
 
-        # Refresh online status on any activity
+        # Keep user alive in global presence
         cache.set(f'user_online_global_{self.user_id}', True, timeout=300)
 
         if message_type == 'typing':
-            # Broadcast typing status to specific match
             match_id = data.get('match_id')
             is_typing = data.get('is_typing', False)
 
             if match_id:
+                # Broadcast typing to global presence listeners
                 await self.channel_layer.group_send(
                     f'match_presence_{match_id}',
                     {
@@ -422,14 +389,12 @@ class PresenceConsumer(AsyncWebsocketConsumer):
                 )
 
         elif message_type == 'ping':
-            # Heartbeat to keep connection alive
             await self.send(text_data=json.dumps({
                 'type': 'pong'
             }))
 
     async def user_status_update(self, event):
         """Send user online/offline status update"""
-        # Don't send to the user whose status changed
         if event['user_id'] != self.user_id:
             await self.send(text_data=json.dumps({
                 'type': 'user_status',
@@ -440,13 +405,23 @@ class PresenceConsumer(AsyncWebsocketConsumer):
 
     async def typing_status_update(self, event):
         """Send typing indicator update"""
-        # Don't send to the user who is typing
         if event['user_id'] != self.user_id:
             await self.send(text_data=json.dumps({
                 'type': 'typing_status',
                 'user_id': event['user_id'],
                 'match_id': event['match_id'],
                 'is_typing': event['is_typing'],
+            }))
+
+    async def new_message_notification(self, event):
+        """Send new message notification for real-time unread updates"""
+        # Only notify if it's not your own message
+        if event['sender_id'] != self.user_id:
+            await self.send(text_data=json.dumps({
+                'type': 'new_message',
+                'match_id': event['match_id'],
+                'message_id': event['message_id'],
+                'sender_id': event['sender_id'],
             }))
 
     async def send_initial_statuses(self, match_ids):
