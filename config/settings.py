@@ -219,15 +219,23 @@ else:
     CSRF_TRUSTED_ORIGINS = []
 
 # Channels (WebSocket support)
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',  # Development
-        # 'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        # 'CONFIG': {
-        #     "hosts": [config('REDIS_URL', default='redis://localhost:6379/0')],
-        # },
-    },
-}
+if DEBUG:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [config('REDIS_URL')],
+                'capacity': 1000,
+                'expiry': 60,
+            },
+        },
+    }
 
 # Rate limiting
 RATE_LIMIT_ENABLE = config('RATE_LIMIT_ENABLE', default=True, cast=bool)

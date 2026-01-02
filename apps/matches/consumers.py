@@ -359,8 +359,15 @@ class PresenceConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
+
+        user_id = getattr(self, "user_id", None)
+        presence_group = getattr(self, "presence_group", None)
+
+        if not user_id:
+            return
+
         # Mark user as offline globally
-        cache.delete(f'user_online_global_{self.user_id}')
+        cache.delete(f'user_online_global_{user_id}')
 
         # Get all matches for this user
         match_ids = await self.get_user_matches()
@@ -371,18 +378,19 @@ class PresenceConsumer(AsyncWebsocketConsumer):
                 f'match_presence_{match_id}',
                 {
                     'type': 'user_status_update',
-                    'user_id': self.user_id,
+                    'user_id': user_id,
                     'is_online': False,
-                    'is_typing': False,  # Clear typing status on disconnect
+                    'is_typing': False,
                 }
             )
 
-        # Leave all groups
-        await self.channel_layer.group_discard(
-            self.presence_group,
-            self.channel_name
-        )
-        
+        # Leave groups safely
+        if presence_group:
+            await self.channel_layer.group_discard(
+                presence_group,
+                self.channel_name
+            )
+
         for match_id in match_ids:
             await self.channel_layer.group_discard(
                 f'match_presence_{match_id}',
