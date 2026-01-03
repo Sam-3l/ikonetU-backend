@@ -38,7 +38,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
-        # Mark messages as delivered
+        # Mark messages as delivered and broadcast status updates
         delivered_ids = await self.mark_messages_delivered()
         
         for message_id in delivered_ids:
@@ -70,6 +70,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 return
 
             message = await self.save_message(content)
+            
+            # Check if other user is online to determine initial status
+            is_other_user_online = cache.get(f'user_online_global_{self.other_user_id}', False)
+            initial_status = 'delivered' if is_other_user_online else 'sent'
+            
+            # Update message status if delivered
+            if initial_status == 'delivered':
+                await self.update_message_status(str(message.id), 'delivered')
 
             # Broadcast to chat room
             await self.channel_layer.group_send(
@@ -80,7 +88,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         'id': str(message.id),
                         'sender_id': str(message.sender.id),
                         'content': message.content,
-                        'status': message.status,
+                        'status': initial_status,
                         'created_at': message.created_at.isoformat(),
                     }
                 }
@@ -140,20 +148,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def chat_message(self, event):
         """Send chat message to WebSocket"""
         message = event['message']
-        
-        if message['sender_id'] != str(self.user.id):
-            message_id = message['id']
-            await self.mark_message_delivered_by_id(message_id)
-            message['status'] = 'delivered'
-            
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    'type': 'message_status_update',
-                    'message_id': message_id,
-                    'status': 'delivered',
-                }
-            )
 
         if 'created_at' in message:
             if not isinstance(message['created_at'], str):
@@ -276,6 +270,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         return message_ids
 
+    @database_sync_to_async
+    def update_message_status(self, message_id, status):
+        """Update message status"""
+        try:
+            message = Message.objects.get(id=message_id)
+            message.status = status
+            if status == 'delivered':
+                message.delivered_at = timezone.now()
+            elif status == 'read':
+                message.read_at = timezone.now()
+            message.save()
+        except Message.DoesNotExist:
+            pass
+
 
 class PresenceConsumer(AsyncWebsocketConsumer):
     """
@@ -302,8 +310,8 @@ class PresenceConsumer(AsyncWebsocketConsumer):
 
         await self.accept()
 
-        # Set global online status
-        cache.set(f'user_online_global_{self.user_id}', True, timeout=300)
+        # Set global online status (no timeout - must be explicitly cleared)
+        cache.set(f'user_online_global_{self.user_id}', True, timeout=None)
 
         match_ids = await self.get_user_matches()
 
@@ -324,6 +332,31 @@ class PresenceConsumer(AsyncWebsocketConsumer):
                     'is_online': True,
                 }
             )
+
+        # Mark all undelivered messages to this user as delivered
+        delivered_message_ids = await self.mark_all_undelivered_messages()
+        
+        # Broadcast delivery status to both chat rooms AND presence groups
+        for match_id, message_ids in delivered_message_ids.items():
+            for message_id in message_ids:
+                # Broadcast to chat room (for users currently in the chat)
+                await self.channel_layer.group_send(
+                    f'chat_{match_id}',
+                    {
+                        'type': 'message_status_update',
+                        'message_id': str(message_id),
+                        'status': 'delivered',
+                    }
+                )
+                # ALSO broadcast to presence group (for all users in the match)
+                await self.channel_layer.group_send(
+                    f'match_presence_{match_id}',
+                    {
+                        'type': 'message_status_broadcast',
+                        'message_id': str(message_id),
+                        'status': 'delivered',
+                    }
+                )
 
         await self.send_initial_statuses(match_ids)
 
@@ -368,9 +401,6 @@ class PresenceConsumer(AsyncWebsocketConsumer):
         """Receive message from WebSocket"""
         data = json.loads(text_data)
         message_type = data.get('type')
-
-        # Keep user alive in global presence
-        cache.set(f'user_online_global_{self.user_id}', True, timeout=300)
 
         if message_type == 'typing':
             match_id = data.get('match_id')
@@ -424,6 +454,14 @@ class PresenceConsumer(AsyncWebsocketConsumer):
                 'sender_id': event['sender_id'],
             }))
 
+    async def message_status_broadcast(self, event):
+        """Broadcast message status updates (delivered/read) via global presence"""
+        await self.send(text_data=json.dumps({
+            'type': 'message_status_update',
+            'message_id': event['message_id'],
+            'status': event['status'],
+        }))
+
     async def send_initial_statuses(self, match_ids):
         """Send initial online status of all matched users"""
         other_user_ids = await self.get_other_users_from_matches(match_ids)
@@ -469,3 +507,39 @@ class PresenceConsumer(AsyncWebsocketConsumer):
                 other_user_ids.append(str(match.investor_id))
         
         return other_user_ids
+
+    @database_sync_to_async
+    def mark_all_undelivered_messages(self):
+        """Mark all undelivered messages to this user as delivered across all matches"""
+        from apps.matches.models import Match, Message
+        
+        # Get all matches for this user
+        matches = Match.objects.filter(
+            is_active=True
+        ).filter(
+            investor_id=self.user.id
+        ) | Match.objects.filter(
+            is_active=True,
+            founder_id=self.user.id
+        )
+        
+        result = {}
+        
+        for match in matches:
+            # Get all 'sent' messages in this match that are NOT from this user
+            messages = Message.objects.filter(
+                match_id=match.id,
+                status='sent'
+            ).exclude(sender_id=self.user.id)
+            
+            message_ids = list(messages.values_list('id', flat=True))
+            
+            if message_ids:
+                # Update to delivered
+                messages.update(
+                    status='delivered',
+                    delivered_at=timezone.now()
+                )
+                result[str(match.id)] = message_ids
+        
+        return result
