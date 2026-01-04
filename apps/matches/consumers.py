@@ -476,6 +476,14 @@ class PresenceConsumer(AsyncWebsocketConsumer):
             'statuses': statuses
         }))
 
+    async def match_status_update(self, event):
+        """Send match status update notification"""
+        await self.send(text_data=json.dumps({
+            'type': 'match_status_update',
+            'match_id': event['match_id'],
+            'is_active': event['is_active'],
+        }))
+
     @database_sync_to_async
     def get_user_matches(self):
         """Get all match IDs for the current user"""

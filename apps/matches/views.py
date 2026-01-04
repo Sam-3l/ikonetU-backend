@@ -6,6 +6,9 @@ from django.db.models import Q, Count, Max, Prefetch
 from .models import Match, Message
 from apps.accounts.models import User
 from apps.profiles.models import FounderProfile, InvestorProfile
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+from django.core.cache import cache
 
 
 @api_view(['GET'])
@@ -200,6 +203,48 @@ def accept_match_view(request, match_id):
     
     match.is_active = True
     match.save()
+
+    channel_layer = get_channel_layer()
+    investor_id = str(match.investor_id)
+    founder_id = str(match.founder_id)
+
+    # Broadcast match acceptance to both users
+    for user_id in [investor_id, founder_id]:
+        async_to_sync(channel_layer.group_send)(
+            f'user_presence_{user_id}',
+            {
+                'type': 'match_status_update',
+                'match_id': str(match.id),
+                'is_active': True,
+            }
+        )
+    
+    # ALSO send the initial online status of each user to the other
+    # Check if each user is online
+    investor_online = cache.get(f'user_online_global_{investor_id}', False)
+    founder_online = cache.get(f'user_online_global_{founder_id}', False)
+    
+    # Send investor's status to founder
+    if founder_online:
+        async_to_sync(channel_layer.group_send)(
+            f'user_presence_{founder_id}',
+            {
+                'type': 'user_status_update',
+                'user_id': investor_id,
+                'is_online': investor_online,
+            }
+        )
+    
+    # Send founder's status to investor
+    if investor_online:
+        async_to_sync(channel_layer.group_send)(
+            f'user_presence_{investor_id}',
+            {
+                'type': 'user_status_update',
+                'user_id': founder_id,
+                'is_online': founder_online,
+            }
+        )
     
     return Response({
         'message': 'Match accepted',
