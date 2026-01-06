@@ -106,10 +106,16 @@ def upload_avatar(request):
         
         # Delete old avatar if exists
         if request.user.avatar_url:
-            # Extract just the path part (remove domain if present)
-            old_path = request.user.avatar_url.split('/media/')[-1] if '/media/' in request.user.avatar_url else request.user.avatar_url.replace('/media/', '')
-            if old_path and default_storage.exists(old_path):
-                default_storage.delete(old_path)
+            # Extract just the path part from the URL
+            try:
+                # Parse the URL to get just the file path
+                from urllib.parse import urlparse
+                parsed = urlparse(request.user.avatar_url)
+                old_path = parsed.path.split('/media/')[-1] if '/media/' in parsed.path else parsed.path.lstrip('/')
+                if old_path and default_storage.exists(old_path):
+                    default_storage.delete(old_path)
+            except Exception:
+                pass  # If deletion fails, continue with upload
         
         # Generate unique filename
         filename = f"avatars/{request.user.id}/{uuid.uuid4()}.jpg"
@@ -117,9 +123,8 @@ def upload_avatar(request):
         # Save new avatar
         path = default_storage.save(filename, ContentFile(output.read()))
         
-        # Build the full URL using the request's scheme and host
-        # This ensures the URL points to the backend server, not the frontend
-        avatar_url = request.build_absolute_uri(f'/media/{path}')
+        # Get the full URL from storage backend (S3, CloudFront, etc.)
+        avatar_url = request.build_absolute_uri(default_storage.url(path))
         
         # Update user avatar_url
         request.user.avatar_url = avatar_url
