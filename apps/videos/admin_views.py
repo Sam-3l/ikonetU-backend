@@ -3,6 +3,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Count, Q
+from django.utils import timezone
+from datetime import timedelta
 from .models import Video, VideoView, VideoLike
 from apps.accounts.models import User
 from apps.reports.models import Report
@@ -24,6 +26,19 @@ def require_admin(view_func):
 @require_admin
 def admin_dashboard_stats_view(request):
     """Get admin dashboard statistics"""
+    # Get today's date range using timezone-aware datetime
+    from datetime import datetime
+    
+    # Get current time in UTC
+    now = timezone.now()
+    
+    # Get today's start (midnight) in UTC
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Get tomorrow's start (which is today's end)
+    today_end = today_start + timedelta(days=1)
+    
+    # Total counts
     total_users = User.objects.count()
     total_founders = User.objects.filter(role='founder').count()
     total_investors = User.objects.filter(role='investor').count()
@@ -33,6 +48,27 @@ def admin_dashboard_stats_view(request):
     pending_videos = Video.objects.filter(status='processing', is_current=True).count()
 
     pending_reports = Report.objects.filter(status='pending').count()
+    
+    # Today's counts - with detailed debug info
+    today_signups = User.objects.filter(created_at__gte=today_start, created_at__lt=today_end).count()
+    today_videos = Video.objects.filter(created_at__gte=today_start, created_at__lt=today_end).count()
+        
+    # Also get recent records to verify
+    recent_users = User.objects.order_by('-created_at')[:5]
+    recent_videos = Video.objects.order_by('-created_at')[:5]
+        
+    # For matches, use the Match model if available
+    try:
+        from apps.matches.models import Match
+        total_matches = Match.objects.filter(is_active=True).count()
+        today_matches = Match.objects.filter(
+            created_at__gte=today_start, 
+            created_at__lt=today_end,
+            is_active=True
+        ).count()
+    except ImportError:
+        total_matches = 0
+        today_matches = 0
 
     return Response({
         'totalUsers': total_users,
@@ -41,7 +77,11 @@ def admin_dashboard_stats_view(request):
         'totalVideos': total_videos,
         'activeVideos': active_videos,
         'pendingVideos': pending_videos,
+        'totalMatches': total_matches,
         'pendingReports': pending_reports,
+        'todaySignups': today_signups,
+        'todayVideos': today_videos,
+        'todayMatches': today_matches,
     })
 
 
@@ -49,19 +89,84 @@ def admin_dashboard_stats_view(request):
 @permission_classes([IsAuthenticated])
 @require_admin
 def admin_users_view(request):
-    """Get all users"""
-    users = User.objects.all().order_by('-created_at')
-    users_data = [
-        {
-            'id': user.id,
+    """Get all users with their profiles and stats"""
+    users = User.objects.all().select_related(
+        'founder_profile', 'investor_profile'
+    ).order_by('-created_at')
+    
+    # Import Match model
+    try:
+        from apps.matches.models import Match
+        has_match_model = True
+    except ImportError:
+        has_match_model = False
+    
+    users_data = []
+    for user in users:
+        # Get user stats based on role
+        if user.role == 'founder':
+            video_count = Video.objects.filter(founder=user).count()
+            view_count = VideoView.objects.filter(video__founder=user).count()
+            if has_match_model:
+                match_count = Match.objects.filter(founder=user, is_active=True).count()
+            else:
+                match_count = 0
+        elif user.role == 'investor':
+            video_count = 0
+            view_count = 0
+            if has_match_model:
+                match_count = Match.objects.filter(investor=user, is_active=True).count()
+            else:
+                match_count = 0
+        else:
+            video_count = 0
+            view_count = 0
+            match_count = 0
+        
+        user_data = {
+            'id': str(user.id),
             'name': user.name,
             'email': user.email,
             'role': user.role,
-            'created_at': user.created_at,
+            'avatar_url': user.avatar_url if user.avatar_url else None,
+            'created_at': user.created_at.isoformat(),
             'onboarding_complete': user.onboarding_complete,
+            'stats': {
+                'video_count': video_count,
+                'match_count': match_count,
+                'view_count': view_count,
+            }
         }
-        for user in users
-    ]
+        
+        # Add founder profile if exists
+        if user.role == 'founder':
+            try:
+                profile = user.founder_profile
+                user_data['founder_profile'] = {
+                    'company_name': profile.company_name or '',
+                    'sector': profile.sector or '',
+                    'stage': profile.stage or '',
+                    'location': profile.location or '',
+                    'bio': profile.bio or '',
+                }
+            except:
+                user_data['founder_profile'] = None
+        
+        # Add investor profile if exists
+        if user.role == 'investor':
+            try:
+                profile = user.investor_profile
+                user_data['investor_profile'] = {
+                    'firm_name': profile.firm_name or '',
+                    'title': profile.title or '',
+                    'sectors': profile.sectors if profile.sectors else [],
+                    'stages': profile.stages if profile.stages else [],
+                }
+            except:
+                user_data['investor_profile'] = None
+        
+        users_data.append(user_data)
+    
     return Response(users_data)
 
 
@@ -74,13 +179,18 @@ def admin_videos_view(request):
 
     videos = Video.objects.select_related('founder').prefetch_related('views', 'likes').order_by('-created_at')
 
-    if status_filter:
+    if status_filter and status_filter != 'all':
         videos = videos.filter(status=status_filter)
 
     videos_data = []
     for video in videos:
+        # Get founder's company name if they have a founder profile
+        company_name = None
+        if hasattr(video.founder, 'founder_profile') and video.founder.founder_profile:
+            company_name = video.founder.founder_profile.company_name
+        
         videos_data.append({
-            'id': video.id,
+            'id': str(video.id),
             'title': video.title,
             'url': video.url,
             'thumbnail_url': video.thumbnail_url,
@@ -89,11 +199,12 @@ def admin_videos_view(request):
             'is_current': video.is_current,
             'view_count': video.views.count(),
             'like_count': video.likes.count(),
-            'created_at': video.created_at,
+            'created_at': video.created_at.isoformat(),
             'founder': {
-                'id': video.founder.id,
+                'id': str(video.founder.id),
                 'name': video.founder.name,
                 'email': video.founder.email,
+                'company_name': company_name,
             }
         })
 
@@ -111,7 +222,7 @@ def admin_approve_video_view(request, video_id):
         video.save()
         return Response({
             'message': 'Video approved',
-            'video': {'id': video.id, 'status': video.status}
+            'video': {'id': str(video.id), 'status': video.status}
         })
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -128,7 +239,7 @@ def admin_reject_video_view(request, video_id):
         video.save()
         return Response({
             'message': 'Video rejected',
-            'video': {'id': video.id, 'status': video.status}
+            'video': {'id': str(video.id), 'status': video.status}
         })
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
