@@ -26,16 +26,10 @@ def require_admin(view_func):
 @require_admin
 def admin_dashboard_stats_view(request):
     """Get admin dashboard statistics"""
-    # Get today's date range using timezone-aware datetime
     from datetime import datetime
     
-    # Get current time in UTC
     now = timezone.now()
-    
-    # Get today's start (midnight) in UTC
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # Get tomorrow's start (which is today's end)
     today_end = today_start + timedelta(days=1)
     
     # Total counts
@@ -49,15 +43,10 @@ def admin_dashboard_stats_view(request):
 
     pending_reports = Report.objects.filter(status='pending').count()
     
-    # Today's counts - with detailed debug info
     today_signups = User.objects.filter(created_at__gte=today_start, created_at__lt=today_end).count()
     today_videos = Video.objects.filter(created_at__gte=today_start, created_at__lt=today_end).count()
         
-    # Also get recent records to verify
-    recent_users = User.objects.order_by('-created_at')[:5]
-    recent_videos = Video.objects.order_by('-created_at')[:5]
-        
-    # For matches, use the Match model if available
+    # For matches
     try:
         from apps.matches.models import Match
         total_matches = Match.objects.filter(is_active=True).count()
@@ -71,17 +60,17 @@ def admin_dashboard_stats_view(request):
         today_matches = 0
 
     return Response({
-        'totalUsers': total_users,
-        'totalFounders': total_founders,
-        'totalInvestors': total_investors,
-        'totalVideos': total_videos,
-        'activeVideos': active_videos,
-        'pendingVideos': pending_videos,
-        'totalMatches': total_matches,
-        'pendingReports': pending_reports,
-        'todaySignups': today_signups,
-        'todayVideos': today_videos,
-        'todayMatches': today_matches,
+        'total_users': total_users,
+        'total_founders': total_founders,
+        'total_investors': total_investors,
+        'total_videos': total_videos,
+        'active_videos': active_videos,
+        'pending_videos': pending_videos,
+        'total_matches': total_matches,
+        'pending_reports': pending_reports,
+        'today_signups': today_signups,
+        'today_videos': today_videos,
+        'today_matches': today_matches,
     })
 
 
@@ -94,7 +83,6 @@ def admin_users_view(request):
         'founder_profile', 'investor_profile'
     ).order_by('-created_at')
     
-    # Import Match model
     try:
         from apps.matches.models import Match
         has_match_model = True
@@ -107,17 +95,11 @@ def admin_users_view(request):
         if user.role == 'founder':
             video_count = Video.objects.filter(founder=user).count()
             view_count = VideoView.objects.filter(video__founder=user).count()
-            if has_match_model:
-                match_count = Match.objects.filter(founder=user, is_active=True).count()
-            else:
-                match_count = 0
+            match_count = Match.objects.filter(founder=user, is_active=True).count() if has_match_model else 0
         elif user.role == 'investor':
             video_count = 0
             view_count = 0
-            if has_match_model:
-                match_count = Match.objects.filter(investor=user, is_active=True).count()
-            else:
-                match_count = 0
+            match_count = Match.objects.filter(investor=user, is_active=True).count() if has_match_model else 0
         else:
             video_count = 0
             view_count = 0
@@ -135,7 +117,9 @@ def admin_users_view(request):
                 'video_count': video_count,
                 'match_count': match_count,
                 'view_count': view_count,
-            }
+            },
+            'founder_profile': None,
+            'investor_profile': None,
         }
         
         # Add founder profile if exists
@@ -149,8 +133,8 @@ def admin_users_view(request):
                     'location': profile.location or '',
                     'bio': profile.bio or '',
                 }
-            except:
-                user_data['founder_profile'] = None
+            except Exception:
+                pass
         
         # Add investor profile if exists
         if user.role == 'investor':
@@ -162,8 +146,8 @@ def admin_users_view(request):
                     'sectors': profile.sectors if profile.sectors else [],
                     'stages': profile.stages if profile.stages else [],
                 }
-            except:
-                user_data['investor_profile'] = None
+            except Exception:
+                pass
         
         users_data.append(user_data)
     
@@ -177,17 +161,24 @@ def admin_videos_view(request):
     """Get all videos for admin review"""
     status_filter = request.GET.get('status', None)
 
-    videos = Video.objects.select_related('founder').prefetch_related('views', 'likes').order_by('-created_at')
+    videos = Video.objects.select_related('founder').order_by('-created_at')
 
     if status_filter and status_filter != 'all':
         videos = videos.filter(status=status_filter)
 
     videos_data = []
     for video in videos:
-        # Get founder's company name if they have a founder profile
+        # Get founder's company name
         company_name = None
-        if hasattr(video.founder, 'founder_profile') and video.founder.founder_profile:
-            company_name = video.founder.founder_profile.company_name
+        try:
+            if hasattr(video.founder, 'founder_profile'):
+                company_name = video.founder.founder_profile.company_name
+        except Exception:
+            pass
+        
+        # Count views and likes
+        view_count = VideoView.objects.filter(video=video).count()
+        like_count = VideoLike.objects.filter(video=video).count()
         
         videos_data.append({
             'id': str(video.id),
@@ -197,8 +188,8 @@ def admin_videos_view(request):
             'duration': video.duration,
             'status': video.status,
             'is_current': video.is_current,
-            'view_count': video.views.count(),
-            'like_count': video.likes.count(),
+            'view_count': view_count,
+            'like_count': like_count,
             'created_at': video.created_at.isoformat(),
             'founder': {
                 'id': str(video.founder.id),
