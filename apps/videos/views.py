@@ -3,6 +3,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import F, Q
+from django.db import transaction, IntegrityError
 from django.core.files.storage import default_storage
 from .models import Video, VideoLike, VideoView
 from .serializers import VideoSerializer, VideoWithFounderSerializer, VideoHistorySerializer
@@ -255,38 +256,42 @@ def video_detail_and_update_view(request, video_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def like_video_view(request, video_id):
-    """Toggle like on a video, or force like with double_tap param"""
+    """Toggle like on a video, safely handling duplicates"""
     try:
         video = Video.objects.get(id=video_id)
         is_double_tap = request.data.get('double_tap', False) or request.GET.get('double_tap', False)
-        
-        # Check if user already liked this video
-        existing_like = VideoLike.objects.filter(video=video, user=request.user).first()
-        
-        if is_double_tap:
-            # Double tap always likes (never unlikes)
-            if not existing_like:
-                VideoLike.objects.create(video=video, user=request.user)
-            liked = True
-        else:
-            if existing_like:
-                # Unlike
-                existing_like.delete()
-                liked = False
-            else:
-                # Like
-                VideoLike.objects.create(video=video, user=request.user)
+
+        liked = False
+
+        with transaction.atomic():
+            if is_double_tap:
+                # Always like; get_or_create prevents duplicates
+                VideoLike.objects.get_or_create(video=video, user=request.user)
                 liked = True
-        
+            else:
+                # Toggle like safely
+                try:
+                    like_obj = VideoLike.objects.get(video=video, user=request.user)
+                    # Already liked → unlike
+                    like_obj.delete()
+                    liked = False
+                except VideoLike.DoesNotExist:
+                    # Not liked yet → like it
+                    VideoLike.objects.create(video=video, user=request.user)
+                    liked = True
+
         like_count = video.likes.count()
-        
+
         return Response({
             'liked': liked,
             'likeCount': like_count
         })
-        
+
     except Video.DoesNotExist:
         return Response({'message': 'Video not found'}, status=status.HTTP_404_NOT_FOUND)
+    except IntegrityError:
+        # Fallback if a race condition somehow still happens
+        return Response({'message': 'You have already liked this video'}, status=400)
 
 
 @api_view(['POST'])
