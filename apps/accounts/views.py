@@ -75,7 +75,7 @@ def login_view(request):
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
     
     # CHECK EMAIL VERIFICATION
-    if not user.email_verified:
+    if not user.email_verified and not (user.is_staff or user.is_superuser):
         return Response({
             'error': 'Please verify your email before logging in',
             'requires_verification': True,
