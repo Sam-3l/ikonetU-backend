@@ -6,7 +6,7 @@ from .models import User
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'name', 'role', 'avatar_url', 'onboarding_complete', 'created_at']
+        fields = ['id', 'email', 'name', 'role', 'avatar_url', 'onboarding_complete', 'email_verified', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -24,6 +24,8 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
+        user.email_verified = False
+        user.save()
         return user
 
 
@@ -41,6 +43,8 @@ class LoginSerializer(serializers.Serializer):
                 raise serializers.ValidationError("Invalid email or password")
             if not user.is_active:
                 raise serializers.ValidationError("User account is disabled")
+            if not user.email_verified:
+                raise serializers.ValidationError("Please verify your email before logging in")
             data['user'] = user
         else:
             raise serializers.ValidationError("Must include email and password")

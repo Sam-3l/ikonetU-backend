@@ -8,11 +8,12 @@ from apps.videos.models import Video, VideoLike, VideoView
 from apps.profiles.models import FounderProfile, InvestorProfile
 from apps.profiles.serializers import FounderProfileSerializer, InvestorProfileSerializer
 from .serializers import RegisterSerializer, UserSerializer
-from .models import User
-import secrets
+from .models import User, EmailVerification
+from .email_service import EmailService
 
 from django.http import FileResponse, Http404
 from django.conf import settings
+import secrets
 import os
 import mimetypes
 
@@ -20,11 +21,12 @@ import mimetypes
 def generate_token():
     return secrets.token_urlsafe(32)
 
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register_view(request):
     """
-    Register a new user
+    Register a new user and send verification email
     """
     serializer = RegisterSerializer(data=request.data)
     if serializer.is_valid():
@@ -32,29 +34,34 @@ def register_view(request):
         
         # Create profile based on role
         if user.role == 'founder':
-            from apps.profiles.models import FounderProfile
             FounderProfile.objects.create(user=user, company_name='')
         elif user.role == 'investor':
-            from apps.profiles.models import InvestorProfile
             InvestorProfile.objects.create(user=user)
         
-        # Generate token and store in cache
-        token = generate_token()
-        cache.set(f'auth_token:{token}', user.id, timeout=604800)  # 7 days
+        # Create email verification and send OTP
+        verification = EmailVerification.objects.create(user=user)
         
+        try:
+            EmailService.send_verification_email(user, verification.otp_code)
+        except Exception as e:
+            print(f"Failed to send verification email: {e}")
+        
+        # DON'T generate auth token yet - user must verify email first
         user_serializer = UserSerializer(user)
         return Response({
+            'message': 'Registration successful. Please check your email for verification code.',
             'user': user_serializer.data,
-            'token': token
+            'requires_verification': True
         }, status=status.HTTP_201_CREATED)
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
     """
-    Login user
+    Login user - requires email verification
     """
     email = request.data.get('email')
     password = request.data.get('password')
@@ -67,6 +74,14 @@ def login_view(request):
     if user is None:
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
     
+    # CHECK EMAIL VERIFICATION
+    if not user.email_verified:
+        return Response({
+            'error': 'Please verify your email before logging in',
+            'requires_verification': True,
+            'email': user.email
+        }, status=status.HTTP_403_FORBIDDEN)
+    
     # Generate token and store in cache
     token = generate_token()
     cache.set(f'auth_token:{token}', user.id, timeout=604800)  # 7 days
@@ -76,6 +91,7 @@ def login_view(request):
         'user': user_serializer.data,
         'token': token
     })
+
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -90,6 +106,7 @@ def logout_view(request):
     
     return Response({'message': 'Logged out successfully'})
 
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def me_view(request):
@@ -103,16 +120,12 @@ def me_view(request):
     profile = None
     
     if request.user.role == 'founder':
-        from apps.profiles.models import FounderProfile
-        from apps.profiles.serializers import FounderProfileSerializer
         try:
             founder_profile = FounderProfile.objects.get(user=request.user)
             profile = FounderProfileSerializer(founder_profile).data
         except FounderProfile.DoesNotExist:
             pass
     elif request.user.role == 'investor':
-        from apps.profiles.models import InvestorProfile
-        from apps.profiles.serializers import InvestorProfileSerializer
         try:
             investor_profile = InvestorProfile.objects.get(user=request.user)
             profile = InvestorProfileSerializer(investor_profile).data
@@ -123,6 +136,7 @@ def me_view(request):
         'user': user_serializer.data,
         'profile': profile
     })    
+
 
 @api_view(['GET'])
 @permission_classes([AllowAny])

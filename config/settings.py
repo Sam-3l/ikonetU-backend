@@ -253,3 +253,16 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_BROWSER_XSS_FILTER = True
     X_FRAME_OPTIONS = 'DENY'
+
+# Email Configuration (Brevo)
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = config('BREVO_SMTP_SERVER', default='smtp-relay.brevo.com')
+EMAIL_PORT = config('BREVO_SMTP_PORT', default=587, cast=int)
+EMAIL_USE_TLS = True
+EMAIL_HOST_USER = config('BREVO_SMTP_USER', default='')
+EMAIL_HOST_PASSWORD = config('BREVO_SMTP_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = config('FROM_EMAIL', default='info@ikonetu.com')
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')
+
+# OTP Settings
+OTP_EXPIRATION_MINUTES = 15
