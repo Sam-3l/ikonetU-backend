@@ -8,6 +8,7 @@ from django.core.files.storage import default_storage
 from .models import Video, VideoLike, VideoView
 from .serializers import VideoSerializer, VideoWithFounderSerializer, VideoHistorySerializer
 from .feed_algorithm import get_smart_feed_for_investor
+from apps.notifications.services import NotificationService
 
 
 @api_view(['GET'])
@@ -365,6 +366,10 @@ def admin_update_video_status_view(request, video_id):
         
         video.status = new_status
         video.save()
+
+        # Send notification to founder
+        if new_status in ['active', 'rejected']:
+            NotificationService.create_video_status_notification(video, new_status)
         
         video_data = VideoSerializer(video).data
         video_data['likeCount'] = video.likes.count()

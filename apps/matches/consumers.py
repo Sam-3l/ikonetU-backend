@@ -5,6 +5,7 @@ from django.utils import timezone
 from django.core.cache import cache
 from .models import Match, Message
 from apps.accounts.models import User
+from apps.notifications.services import NotificationService
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -105,6 +106,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 }
             )
 
+            await self.create_message_notification_async(message)
+
         elif message_type == 'message_read':
             message_id = data.get('message_id')
             await self.mark_message_read(message_id)
@@ -174,6 +177,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'user_id': event['user_id'],
                 'is_typing': event['is_typing'],
             }))
+
+    @database_sync_to_async
+    def create_message_notification_async(self, message):
+        """Create notification for new message - async and non-blocking"""
+        from apps.matches.models import Match
+        
+        try:
+            match = Match.objects.select_related('investor', 'founder').get(id=self.match_id)
+            # This runs in a thread pool, won't block WebSocket
+            NotificationService.create_message_notification(message, match)
+        except Exception as e:
+            # Log but don't fail the message delivery
+            print(f"Failed to create notification: {e}")
 
     @database_sync_to_async
     def verify_match_access(self):

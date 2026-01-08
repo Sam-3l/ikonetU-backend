@@ -6,6 +6,7 @@ from django.db import transaction
 from .models import Signal
 from apps.matches.models import Match
 from apps.accounts.models import User
+from apps.notifications.services import NotificationService
 
 
 @api_view(['POST'])
@@ -63,6 +64,10 @@ def create_signal_view(request):
                 founder=founder,
                 defaults={'is_active': False}
             )
+
+            # Send notification to founder
+            if match_created:
+                NotificationService.create_match_notification(match)
     
     return Response({
         'signal': {

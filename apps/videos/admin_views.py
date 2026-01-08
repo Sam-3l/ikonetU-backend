@@ -8,6 +8,7 @@ from datetime import timedelta
 from .models import Video, VideoView, VideoLike
 from apps.accounts.models import User
 from apps.reports.models import Report
+from apps.notifications.services import NotificationService
 
 
 def require_admin(view_func):
@@ -211,6 +212,9 @@ def admin_approve_video_view(request, video_id):
         video = Video.objects.get(id=video_id)
         video.status = 'active'
         video.save()
+        
+        NotificationService.create_video_status_notification(video, 'active')
+        
         return Response({
             'message': 'Video approved',
             'video': {'id': str(video.id), 'status': video.status}
@@ -228,6 +232,9 @@ def admin_reject_video_view(request, video_id):
         video = Video.objects.get(id=video_id)
         video.status = 'rejected'
         video.save()
+
+        NotificationService.create_video_status_notification(video, 'rejected')
+
         return Response({
             'message': 'Video rejected',
             'video': {'id': str(video.id), 'status': video.status}

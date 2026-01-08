@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'apps.matches',
     'apps.legal',
     'apps.reports',
+    'apps.notifications',
 ]
 
 MIDDLEWARE = [
