@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.contrib.auth import authenticate
 from django.core.cache import cache
+from django.utils import timezone
 from apps.videos.models import Video, VideoLike, VideoView
 from apps.profiles.models import FounderProfile, InvestorProfile
 from apps.profiles.serializers import FounderProfileSerializer, InvestorProfileSerializer
@@ -28,7 +29,12 @@ def register_view(request):
     """
     Register a new user and send verification email
     """
-    serializer = RegisterSerializer(data=request.data)
+    # NORMALIZE EMAIL TO LOWERCASE
+    data = request.data.copy()
+    if 'email' in data:
+        data['email'] = data['email'].strip().lower()
+    
+    serializer = RegisterSerializer(data=data)
     if serializer.is_valid():
         user = serializer.save()
         
@@ -63,7 +69,7 @@ def login_view(request):
     """
     Login user - requires email verification
     """
-    email = request.data.get('email')
+    email = request.data.get('email', '').strip().lower()
     password = request.data.get('password')
     
     if not email or not password:
