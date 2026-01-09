@@ -13,7 +13,7 @@ import re
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def search_view(request):
-    """Universal search - videos, founders, investors with fuzzy matching"""
+    """Universal search - videos, founders, investors with fuzzy matching and keyword search"""
     query = request.GET.get('q', '').strip()
     
     if not query or len(query) < 2:
@@ -23,27 +23,56 @@ def search_view(request):
             'query': query
         })
     
-    # Fuzzy search videos
+    query_lower = query.lower()
+    
+    # Fuzzy search videos with enhanced keyword matching
     all_videos = Video.objects.filter(
         status='active',
         is_current=True
     ).select_related('founder').prefetch_related('likes', 'views')
     
-    # Create searchable text for each video
+    # Create searchable text for each video (including profile keywords)
     video_matches = []
     for video in all_videos:
         searchable_text = f"{video.title} {video.founder.name if video.founder else ''}"
+        
         try:
             founder_profile = FounderProfile.objects.get(user=video.founder)
+            # Add all profile fields including new multi-value fields
             searchable_text += f" {founder_profile.company_name}"
+            searchable_text += f" {founder_profile.sector}"
+            searchable_text += f" {founder_profile.stage}"
+            searchable_text += f" {founder_profile.bio}"
+            
+            # Add sectors array
+            if founder_profile.sectors:
+                searchable_text += " " + " ".join(founder_profile.sectors)
+            
+            # Add stages array
+            if founder_profile.stages:
+                searchable_text += " " + " ".join(founder_profile.stages)
+            
+            # Add support types array
+            if founder_profile.support_types:
+                searchable_text += " " + " ".join(founder_profile.support_types)
+                
         except FounderProfile.DoesNotExist:
             pass
         
         # Calculate fuzzy match score
         score = max(
-            fuzz.partial_ratio(query.lower(), searchable_text.lower()),
-            fuzz.token_set_ratio(query.lower(), searchable_text.lower())
+            fuzz.partial_ratio(query_lower, searchable_text.lower()),
+            fuzz.token_set_ratio(query_lower, searchable_text.lower())
         )
+        
+        # Boost score for exact keyword matches in arrays
+        if founder_profile:
+            if founder_profile.sectors and any(query_lower in sector.lower() for sector in founder_profile.sectors):
+                score = min(100, score + 20)
+            if founder_profile.stages and any(query_lower in stage.lower() for stage in founder_profile.stages):
+                score = min(100, score + 20)
+            if founder_profile.support_types and any(query_lower in support.lower() for support in founder_profile.support_types):
+                score = min(100, score + 15)
         
         if score > 60:  # Threshold for relevance
             video_matches.append((video, score))
@@ -63,30 +92,61 @@ def search_view(request):
             video_data['isLiked'] = False
         videos_data.append(video_data)
     
-    # Fuzzy search profiles
+    # Fuzzy search profiles with enhanced keyword matching
     all_users = User.objects.all()
     user_matches = []
     
     for user in all_users:
         searchable_text = user.name
+        profile_keywords = []
         
         if user.role == 'founder':
             try:
                 profile = FounderProfile.objects.get(user=user)
-                searchable_text += f" {profile.company_name} {profile.sector}"
+                searchable_text += f" {profile.company_name} {profile.sector} {profile.stage} {profile.bio}"
+                
+                # Add array fields
+                if profile.sectors:
+                    searchable_text += " " + " ".join(profile.sectors)
+                    profile_keywords.extend(profile.sectors)
+                if profile.stages:
+                    searchable_text += " " + " ".join(profile.stages)
+                    profile_keywords.extend(profile.stages)
+                if profile.support_types:
+                    searchable_text += " " + " ".join(profile.support_types)
+                    profile_keywords.extend(profile.support_types)
+                    
             except FounderProfile.DoesNotExist:
                 pass
+                
         elif user.role == 'investor':
             try:
                 profile = InvestorProfile.objects.get(user=user)
-                searchable_text += f" {profile.firm_name}"
+                searchable_text += f" {profile.firm_name} {profile.thesis}"
+                
+                # Add array fields
+                if profile.sectors:
+                    searchable_text += " " + " ".join(profile.sectors)
+                    profile_keywords.extend(profile.sectors)
+                if profile.stages:
+                    searchable_text += " " + " ".join(profile.stages)
+                    profile_keywords.extend(profile.stages)
+                if profile.support_types:
+                    searchable_text += " " + " ".join(profile.support_types)
+                    profile_keywords.extend(profile.support_types)
+                    
             except InvestorProfile.DoesNotExist:
                 pass
         
+        # Calculate fuzzy match score
         score = max(
-            fuzz.partial_ratio(query.lower(), searchable_text.lower()),
-            fuzz.token_set_ratio(query.lower(), searchable_text.lower())
+            fuzz.partial_ratio(query_lower, searchable_text.lower()),
+            fuzz.token_set_ratio(query_lower, searchable_text.lower())
         )
+        
+        # Boost score for exact keyword matches
+        if profile_keywords and any(query_lower in keyword.lower() for keyword in profile_keywords):
+            score = min(100, score + 25)
         
         if score > 60:
             user_matches.append((user, score))
@@ -109,13 +169,19 @@ def search_view(request):
                 profile_info['company_name'] = founder_profile.company_name
                 profile_info['sector'] = founder_profile.sector
                 profile_info['location'] = founder_profile.location
+                profile_info['sectors'] = founder_profile.sectors
+                profile_info['stages'] = founder_profile.stages
+                profile_info['support_types'] = founder_profile.support_types
             except FounderProfile.DoesNotExist:
                 pass
+                
         elif user.role == 'investor':
             try:
                 investor_profile = InvestorProfile.objects.get(user=user)
                 profile_info['firm_name'] = investor_profile.firm_name
                 profile_info['title'] = investor_profile.title
+                profile_info['sectors'] = investor_profile.sectors
+                profile_info['stages'] = investor_profile.stages
             except InvestorProfile.DoesNotExist:
                 pass
         
@@ -167,18 +233,84 @@ def autocomplete_suggestions_view(request):
         )
         suggestions.update([match[0] for match in user_matches if match[1] > 60])
         
-        # Sectors - fuzzy match
-        sectors = FounderProfile.objects.filter(
-            sector__isnull=False
-        ).exclude(sector='').values_list('sector', flat=True).distinct()
+        # Sectors from both founders and investors - fuzzy match
+        founder_sectors = FounderProfile.objects.exclude(
+            sectors__isnull=True
+        ).exclude(sectors=[]).values_list('sectors', flat=True)
         
-        sector_matches = process.extract(
-            query,
-            sectors,
-            scorer=fuzz.partial_ratio,
-            limit=2
-        )
-        suggestions.update([match[0] for match in sector_matches if match[1] > 60])
+        investor_sectors = InvestorProfile.objects.exclude(
+            sectors__isnull=True
+        ).exclude(sectors=[]).values_list('sectors', flat=True)
+        
+        # Flatten the lists
+        all_sectors = set()
+        for sector_list in founder_sectors:
+            if sector_list:
+                all_sectors.update(sector_list)
+        for sector_list in investor_sectors:
+            if sector_list:
+                all_sectors.update(sector_list)
+        
+        if all_sectors:
+            sector_matches = process.extract(
+                query,
+                list(all_sectors),
+                scorer=fuzz.partial_ratio,
+                limit=3
+            )
+            suggestions.update([match[0] for match in sector_matches if match[1] > 60])
+        
+        # Stages from both founders and investors
+        founder_stages = FounderProfile.objects.exclude(
+            stages__isnull=True
+        ).exclude(stages=[]).values_list('stages', flat=True)
+        
+        investor_stages = InvestorProfile.objects.exclude(
+            stages__isnull=True
+        ).exclude(stages=[]).values_list('stages', flat=True)
+        
+        all_stages = set()
+        for stage_list in founder_stages:
+            if stage_list:
+                all_stages.update(stage_list)
+        for stage_list in investor_stages:
+            if stage_list:
+                all_stages.update(stage_list)
+        
+        if all_stages:
+            stage_matches = process.extract(
+                query,
+                list(all_stages),
+                scorer=fuzz.partial_ratio,
+                limit=2
+            )
+            suggestions.update([match[0] for match in stage_matches if match[1] > 60])
+        
+        # Support types
+        founder_support = FounderProfile.objects.exclude(
+            support_types__isnull=True
+        ).exclude(support_types=[]).values_list('support_types', flat=True)
+        
+        investor_support = InvestorProfile.objects.exclude(
+            support_types__isnull=True
+        ).exclude(support_types=[]).values_list('support_types', flat=True)
+        
+        all_support = set()
+        for support_list in founder_support:
+            if support_list:
+                all_support.update(support_list)
+        for support_list in investor_support:
+            if support_list:
+                all_support.update(support_list)
+        
+        if all_support:
+            support_matches = process.extract(
+                query,
+                list(all_support),
+                scorer=fuzz.partial_ratio,
+                limit=2
+            )
+            suggestions.update([match[0] for match in support_matches if match[1] > 60])
     
     # 2. Smart English language completions (YouTube/TikTok style)
     language_suggestions = generate_smart_language_completions(query)
@@ -246,6 +378,11 @@ def generate_smart_language_completions(query):
         'find': ['find investors', 'find funding', 'find co-founder', 'find startup ideas'],
         'best': ['best investors', 'best startups', 'best funding', 'best pitch'],
         'top': ['top investors', 'top startups', 'top vcs', 'top founders'],
+        'advisory': ['advisory support', 'advisory board', 'advisory services'],
+        'hands': ['hands-on support', 'hands-on investors'],
+        'capital': ['capital only', 'capital raising', 'capital investors'],
+        'board': ['board seat', 'board members', 'board advisory'],
+        'strategic': ['strategic support', 'strategic investors', 'strategic partnerships'],
     }
     
     # Check first word for patterns
@@ -265,13 +402,14 @@ def generate_smart_language_completions(query):
                     completions.append(pattern)
     
     # Industry/sector completions
-    sectors = ['fintech', 'healthtech', 'edtech', 'climate tech', 'ai', 'saas', 'ecommerce', 'web3']
+    sectors = ['fintech', 'healthcare', 'healthtech', 'edtech', 'climate tech', 'ai', 'ml', 'saas', 'ecommerce', 'web3', 'consumer', 'enterprise']
     for sector in sectors:
         if sector.startswith(query_lower):
             completions.extend([
                 f"{sector} startups",
                 f"{sector} companies",
                 f"{sector} investors",
+                f"{sector} businesses",
             ])
     
     # Location-based suggestions
@@ -282,13 +420,23 @@ def generate_smart_language_completions(query):
                 completions.append(f"{query}{loc}")
     
     # Stage-based suggestions
-    stages = ['pre-seed', 'seed', 'series a', 'series b', 'growth stage']
+    stages = ['pre-seed', 'seed', 'series a', 'series b', 'growth stage', 'early stage', 'late stage']
     for stage in stages:
         if stage.startswith(query_lower):
             completions.extend([
                 f"{stage} funding",
                 f"{stage} startups",
                 f"{stage} investors",
+            ])
+    
+    # Support type suggestions
+    support_types = ['capital only', 'advisory', 'hands-on', 'board seat', 'strategic']
+    for support in support_types:
+        if support.startswith(query_lower) or any(word in query_lower for word in support.split()):
+            completions.extend([
+                f"{support} investors",
+                f"{support} support",
+                f"seeking {support}",
             ])
     
     # Amount-based suggestions
@@ -310,13 +458,30 @@ def search_suggestions_view(request):
     Used for empty state / recent searches
     """
     # Get actual popular searches from your data
-    popular_sectors = FounderProfile.objects.filter(
-        sector__isnull=False
-    ).exclude(sector='').values('sector').annotate(
-        count=Count('sector')
-    ).order_by('-count')[:5]
     
-    suggestions = [s['sector'] for s in popular_sectors if s['sector']]
+    # Get popular sectors from both founders and investors
+    founder_sectors = FounderProfile.objects.exclude(
+        sectors__isnull=True
+    ).exclude(sectors=[]).values_list('sectors', flat=True)
+    
+    investor_sectors = InvestorProfile.objects.exclude(
+        sectors__isnull=True
+    ).exclude(sectors=[]).values_list('sectors', flat=True)
+    
+    # Count sector frequencies
+    sector_counts = {}
+    for sector_list in founder_sectors:
+        if sector_list:
+            for sector in sector_list:
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
+    for sector_list in investor_sectors:
+        if sector_list:
+            for sector in sector_list:
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
+    
+    # Sort by count
+    popular_sectors = sorted(sector_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    suggestions = [sector for sector, count in popular_sectors]
     
     # Add default popular searches
     default_suggestions = [
@@ -327,7 +492,9 @@ def search_suggestions_view(request):
         'SaaS businesses',
         'Healthcare tech',
         'Climate tech',
-        'Web3 projects'
+        'Web3 projects',
+        'Advisory support',
+        'Hands-on investors'
     ]
     
     for suggestion in default_suggestions:

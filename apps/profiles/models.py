@@ -9,11 +9,15 @@ class FounderProfile(models.Model):
     company_name = models.CharField(max_length=255)
     location = models.CharField(max_length=255, blank=True, default='')
     bio = models.TextField(blank=True, default='')
-    sector = models.CharField(max_length=100, blank=True, default='')
-    stage = models.CharField(max_length=100, blank=True, default='')
+    sector = models.CharField(max_length=100, blank=True, default='')  # Keep for backward compatibility
+    stage = models.CharField(max_length=100, blank=True, default='')   # Keep for backward compatibility
     funding_goal = models.CharField(max_length=100, blank=True, default='')
     website = models.URLField(blank=True, default='')
     linkedin = models.URLField(blank=True, default='')
+    
+    sectors = models.JSONField(default=list, blank=True)  # Multiple sectors they operate in
+    stages = models.JSONField(default=list, blank=True)   # Multiple stages they're targeting
+    support_types = models.JSONField(default=list, blank=True)  # Types of support they're seeking
 
     class Meta:
         db_table = 'founder_profiles'
