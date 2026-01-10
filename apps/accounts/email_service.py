@@ -30,7 +30,7 @@ class EmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>Welcome to ikonetU! 🚀</h1>
+                    <h1>Welcome to ikonetU!</h1>
                 </div>
                 <div class="content">
                     <h2>Hi {user.name},</h2>
@@ -104,7 +104,7 @@ class EmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>Password Reset Request 🔒</h1>
+                    <h1>Password Reset Request</h1>
                 </div>
                 <div class="content">
                     <h2>Hi {user.name},</h2>
