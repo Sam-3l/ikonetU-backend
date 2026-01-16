@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
 from .models import Notification
+from rest_framework.permissions import AllowAny
+from django.core.mail import send_mail
+from django.conf import settings
 
 
 @api_view(['GET'])
@@ -99,3 +102,39 @@ def clear_all_notifications_view(request):
     """Clear all notifications"""
     Notification.objects.filter(recipient=request.user).delete()
     return Response({'success': True})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def judge_application(request):
+    data = request.data
+
+    message = f"""
+New Judge Application
+
+Full Name: {data.get('fullName')}
+Email: {data.get('email')}
+LinkedIn: {data.get('linkedin')}
+Role & Company: {data.get('role')}
+Industry: {data.get('industry')}
+Experience: {data.get('experience')}
+
+Motivation:
+{data.get('motivation')}
+
+Perspective:
+{data.get('perspective')}
+
+Invested Before:
+{data.get('invested')}
+"""
+
+    send_mail(
+        subject="New Judge Application | IkonetU",
+        message=message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=["info.info@ikonetu.com"],
+        fail_silently=False,
+    )
+
+    return Response({"success": True})

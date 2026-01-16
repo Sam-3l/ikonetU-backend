@@ -8,4 +8,5 @@ urlpatterns = [
     path('mark-all-read/', views.mark_all_read_view, name='mark-all-read'),
     path('<uuid:notification_id>/delete/', views.delete_notification_view, name='delete-notification'),
     path('clear-all/', views.clear_all_notifications_view, name='clear-all'),
+    path("judge-application/", views.judge_application),
 ]
