@@ -133,7 +133,7 @@ Invested Before:
         subject="New Judge Application | IkonetU",
         message=message,
         from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=["info.info@ikonetu.com"],
+        recipient_list=["customerservice@ikonetu.com"],
         fail_silently=False,
     )
 
