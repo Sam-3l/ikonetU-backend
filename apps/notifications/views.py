@@ -112,7 +112,7 @@ def judge_application(request):
     message = f"""
 New Judge Application
 
-Full Name: {data.get('fullName')}
+Full Name: {data.get('fullname')}
 Email: {data.get('email')}
 LinkedIn: {data.get('linkedin')}
 Role & Company: {data.get('role')}
