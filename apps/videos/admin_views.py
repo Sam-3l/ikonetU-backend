@@ -159,10 +159,14 @@ def admin_users_view(request):
 @permission_classes([IsAuthenticated])
 @require_admin
 def admin_videos_view(request):
-    """Get all videos for admin review"""
+    """Get all videos for admin review, sorted by most liked first"""
     status_filter = request.GET.get('status', None)
 
-    videos = Video.objects.select_related('founder').order_by('-created_at')
+    # Annotate with like_count directly in the DB so sorting is a single
+    # query instead of computing likes per-video in a Python loop.
+    videos = Video.objects.select_related('founder').annotate(
+        like_count_annotated=Count('likes')
+    ).order_by('-like_count_annotated', '-created_at')
 
     if status_filter and status_filter != 'all':
         videos = videos.filter(status=status_filter)
@@ -177,9 +181,9 @@ def admin_videos_view(request):
         except Exception:
             pass
         
-        # Count views and likes
+        # like_count comes from the annotation above (no extra query needed)
         view_count = VideoView.objects.filter(video=video).count()
-        like_count = VideoLike.objects.filter(video=video).count()
+        like_count = video.like_count_annotated
         
         videos_data.append({
             'id': str(video.id),
