@@ -103,28 +103,53 @@ def upload_avatar(request):
         output = BytesIO()
         img.save(output, format='JPEG', quality=90, optimize=True)
         output.seek(0)
-        
-        # Delete old avatar if exists
-        if request.user.avatar_url:
-            # Extract just the path part from the URL
-            try:
-                # Parse the URL to get just the file path
-                from urllib.parse import urlparse
-                parsed = urlparse(request.user.avatar_url)
-                old_path = parsed.path.split('/media/')[-1] if '/media/' in parsed.path else parsed.path.lstrip('/')
-                if old_path and default_storage.exists(old_path):
-                    default_storage.delete(old_path)
-            except Exception:
-                pass  # If deletion fails, continue with upload
-        
+
         # Generate unique filename
         filename = f"avatars/{request.user.id}/{uuid.uuid4()}.jpg"
         
         # Save new avatar
-        path = default_storage.save(filename, ContentFile(output.read()))
-        
+        avatar_bytes = output.read()
+        new_path = default_storage.save(filename, ContentFile(avatar_bytes))
+
+        try:
+            # Verify the upload actually landed - same storage backend as
+            # video uploads, so it's exposed to the same silent-failure risk
+            # (R2 + newer boto3 checksum headers can drop/truncate uploads
+            # without raising). Don't trust a clean .save() return alone.
+            if not default_storage.exists(new_path):
+                raise IOError(
+                    f"Upload verification failed: '{new_path}' not found in "
+                    f"storage after save() reported success"
+                )
+            if default_storage.size(new_path) != len(avatar_bytes):
+                raise IOError(
+                    "Upload verification failed: stored avatar size doesn't "
+                    "match expected size (upload was likely truncated)"
+                )
+        except Exception:
+            # New file is bad - clean it up and bail before touching the
+            # old avatar, so a failed upload never leaves the user with
+            # no avatar at all.
+            try:
+                if default_storage.exists(new_path):
+                    default_storage.delete(new_path)
+            except Exception:
+                pass
+            raise
+
+        # Only delete the old avatar once the new one is confirmed good.
+        if request.user.avatar_url:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(request.user.avatar_url)
+                old_path = parsed.path.split('/media/')[-1] if '/media/' in parsed.path else parsed.path.lstrip('/')
+                if old_path and old_path != new_path and default_storage.exists(old_path):
+                    default_storage.delete(old_path)
+            except Exception:
+                pass  # If deletion fails, continue - not worth failing the request over
+
         # Get the full URL from storage backend (S3, CloudFront, etc.)
-        avatar_url = request.build_absolute_uri(default_storage.url(path))
+        avatar_url = request.build_absolute_uri(default_storage.url(new_path))
         
         # Update user avatar_url
         request.user.avatar_url = avatar_url

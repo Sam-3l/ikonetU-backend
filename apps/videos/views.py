@@ -120,10 +120,34 @@ def create_video_view(request):
     if not video_file:
         return Response({'message': 'video_file is required'}, status=status.HTTP_400_BAD_REQUEST)
     
+    file_path = None
     try:
+        expected_size = video_file.size
+
         # Save video directly - no trimming
         file_name = f"videos/{request.user.id}/{video_file.name}"
         file_path = default_storage.save(file_name, video_file)
+
+        # IMPORTANT: don't trust a clean return from .save() alone.
+        # Newer boto3/botocore versions attach checksum headers that
+        # Cloudflare R2 doesn't fully support, which can cause uploads to
+        # be silently dropped or truncated without boto3 raising an
+        # exception. Explicitly verify the object exists in storage and
+        # is the expected size before creating a DB record that points
+        # to it, otherwise we end up with "successful" uploads that 404.
+        if not default_storage.exists(file_path):
+            raise IOError(
+                f"Upload verification failed: '{file_path}' not found in "
+                f"storage after save() reported success"
+            )
+
+        actual_size = default_storage.size(file_path)
+        if actual_size != expected_size:
+            raise IOError(
+                f"Upload verification failed: expected {expected_size} bytes, "
+                f"storage has {actual_size} bytes (upload was likely truncated)"
+            )
+
         full_url = request.build_absolute_uri(default_storage.url(file_path))
         
         # Create video record with trim metadata
@@ -144,6 +168,15 @@ def create_video_view(request):
         return Response(video_data, status=status.HTTP_201_CREATED)
         
     except Exception as e:
+        # Don't leave a bad/partial object sitting in storage if we're
+        # about to fail the request - clean it up so retries don't pile
+        # up orphaned files under this founder's folder.
+        if file_path:
+            try:
+                if default_storage.exists(file_path):
+                    default_storage.delete(file_path)
+            except Exception:
+                pass
         return Response(
             {'message': f'Video upload failed: {str(e)}'}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR

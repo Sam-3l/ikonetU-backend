@@ -147,6 +147,21 @@ else:
     AWS_S3_FILE_OVERWRITE = False  # Don't overwrite files with same name
     AWS_S3_REGION_NAME = None  # R2 doesn't use regions like S3
 
+    # Newer boto3/botocore versions default to sending AWS's new "flexible
+    # checksum" headers (x-amz-checksum-*) on every upload. Cloudflare R2
+    # (like most S3-compatible providers) doesn't fully support these,
+    # which causes uploads to silently fail or land as truncated/incomplete
+    # objects without boto3 raising an exception. Forcing "when_required"
+    # restores the old, R2-compatible behavior.
+    # NOTE: django-storages requires a real botocore.config.Config instance
+    # here (it passes this straight to boto3.client(config=...)) - a plain
+    # dict will break client construction, so build it explicitly.
+    from botocore.config import Config as _BotoConfig
+    AWS_S3_CLIENT_CONFIG = _BotoConfig(
+        request_checksum_calculation='when_required',
+        response_checksum_validation='when_required',
+    )
+
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
